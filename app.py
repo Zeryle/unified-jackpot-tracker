@@ -9,6 +9,7 @@ the regular cycle.
 from __future__ import annotations
 
 import asyncio
+import os
 from playwright.async_api import async_playwright
 import threading
 import time
@@ -34,6 +35,12 @@ MAX_LOG_LINES = 250
 MAX_SESSION = timedelta(hours=8)
 DEFAULT_INTERVAL = timedelta(hours=1)
 
+# Monotonic log sequence — used by /api/log-tail so the UI can ask
+# "give me lines after seq N" without re-receiving everything. Stored
+# alongside the line in the deque so out-of-order reads still pair.
+_log_seq: int = 0
+
+
 sources_state: dict[str, dict] = {
     name: {
         "active": False,
@@ -47,10 +54,12 @@ sources_state: dict[str, dict] = {
         "thread": None,
         "force_running": False,
         "force_last_result": None,
-        "logs": deque(maxlen=MAX_LOG_LINES),
+        "logs": deque(maxlen=MAX_LOG_LINES),  # tuples (seq, line)
         "cycle_count": 0,
         "cycle_durations": [],   # last N cycle durations (seconds) for adaptive delay
         "avg_cycle_duration": None,  # current moving average
+        "successful_cycles": 0,   # count of cycles since process start w/ last_run_status == 'ok'
+        "error_cycles": 0,
     }
     for name in SCRAPERS
 }
@@ -60,11 +69,13 @@ AVG_WINDOW = 5
 
 
 def _log(source: str, msg: str) -> None:
+    global _log_seq
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line)
+    _log_seq += 1
     with state_lock:
-        sources_state[source]["logs"].append(line)
+        sources_state[source]["logs"].append((_log_seq, line))
     # Persistent disk log (append). Never let I/O break the worker.
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -204,10 +215,12 @@ def _source_worker(source: str, stop_event: threading.Event, force_login: bool) 
             _with_log_redirect(source, lambda: asyncio.run(scraper.run(force_login=force_login and cycle == 1)))
             with state_lock:
                 sources_state[source]["last_run_status"] = "ok"
+                sources_state[source]["successful_cycles"] = sources_state[source].get("successful_cycles", 0) + 1
             _log(source, f"[tid={tid}] Cycle #{cycle} complete.")
         except Exception as e:
             with state_lock:
                 sources_state[source]["last_run_status"] = f"error: {e}"
+                sources_state[source]["error_cycles"] = sources_state[source].get("error_cycles", 0) + 1
             _log(source, f"[tid={tid}] Cycle #{cycle} ERROR: {e}")
         with state_lock:
             sources_state[source]["last_run"] = datetime.now()
@@ -334,6 +347,9 @@ def _force_scrape_worker(source: str, force_login: bool) -> None:
 
 
 # ─── Routes ────────────────────────────────────────────────────────────────
+
+# Process start time — used by /api/diagnostics to report uptime.
+_PROCESS_START_TIME = datetime.now()
 
 
 @app.route("/")
@@ -473,6 +489,8 @@ def _start_one(source: str, force_login: bool) -> None:
         st["cycle_count"] = 0
         st["cycle_durations"] = []
         st["avg_cycle_duration"] = None
+        st["successful_cycles"] = 0
+        st["error_cycles"] = 0
         st["logs"].clear()
         thread = threading.Thread(
             target=_source_worker,
@@ -581,6 +599,95 @@ def backup_db():
         return jsonify({"ok": True, "path": path})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/diagnostics")
+def api_diagnostics():
+    """Operational telemetry — exposes everything you can't see from
+    the dashboard. Useful for spotting zombie workers, drift in
+    cycle durations, and live source-of-truth state. Cheap to call:
+    no DB hits, just memory reads under a single lock acquire.
+    """
+    out = {"sources": {}, "log_seq": _log_seq}
+    with state_lock:
+        for name, st in sources_state.items():
+            thread = st.get("thread")
+            stop_event = st.get("stop_event")
+            success = st.get("successful_cycles", 0)
+            err = st.get("error_cycles", 0)
+            total = success + err
+            success_rate = (success / total) if total else None
+            out["sources"][name] = {
+                "active": st["active"],
+                "stopping": st.get("stopping", False),
+                "thread_alive": bool(thread and thread.is_alive()),
+                "stop_event_set": bool(stop_event and stop_event.is_set()),
+                "cycle_count": st["cycle_count"],
+                "successful_cycles": success,
+                "error_cycles": err,
+                "success_rate": success_rate,
+                "avg_cycle_duration": st.get("avg_cycle_duration"),
+                "last_5_durations": list(st.get("cycle_durations") or []),
+                "last_run": st["last_run"].isoformat() if st.get("last_run") else None,
+                "last_run_status": st["last_run_status"],
+                "last_run_duration": st["last_run_duration"],
+                "next_run": st["next_run"].isoformat() if st.get("next_run") else None,
+                "start_time": st["start_time"].isoformat() if st.get("start_time") else None,
+                "force_running": st["force_running"],
+            }
+    # Process-level info (no lock needed)
+    out["process"] = {
+        "pid": os.getpid(),
+        "log_file": str(LOG_FILE),
+        "log_file_exists": LOG_FILE.exists(),
+        "log_file_bytes": LOG_FILE.stat().st_size if LOG_FILE.exists() else 0,
+        "db_path": str(db.DB_NAME),
+        "db_exists": db.DB_NAME.exists(),
+        "uptime_seconds": (datetime.now() - _PROCESS_START_TIME).total_seconds(),
+    }
+    return jsonify(out)
+
+
+@app.route("/api/log-tail")
+def api_log_tail():
+    """Stream-only-the-new-lines for the live log viewer.
+
+    Query: ?source=zitobox&after=<int seq>
+    Returns JSON {"lines": [{"seq": N, "text": "..."}, ...], "max_seq": M}
+    where M is the highest seq currently in the source's buffer (or
+    in the global counter if the source's deque is empty).
+
+    The buffer is a deque(maxlen=250), so lines older than that may
+    be MISSING from the response (not retransmitted). That's by design:
+    the client keeps a sliding window.
+    """
+    source = request.args.get("source")
+    after_raw = request.args.get("after", "0")
+    try:
+        after = int(after_raw)
+    except (TypeError, ValueError):
+        after = 0
+    if source not in SCRAPERS:
+        return jsonify({"ok": False, "error": f"Unknown source: {source}"}), 400
+    with state_lock:
+        buf = sources_state[source]["logs"]
+        items = list(buf)  # snapshot
+    # If the buf dropped the line the client last saw, the client is
+    # behind the buffer rotation. Return a marker so it can clear.
+    out_of_window = False
+    if items:
+        first_seq = items[0][0]
+        if after > 0 and after < first_seq - 1:
+            out_of_window = True
+    new_lines = [(seq, text) for seq, text in items if seq > after]
+    return jsonify({
+        "ok": True,
+        "source": source,
+        "after": after,
+        "max_seq": max((s for s, _ in items), default=_log_seq),
+        "lines": [{"seq": s, "text": t} for s, t in new_lines],
+        "out_of_window": out_of_window,
+    })
 
 
 if __name__ == "__main__":

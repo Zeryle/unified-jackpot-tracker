@@ -114,6 +114,88 @@
         .live-status.warn { color: var(--warn); border-color: #fbbf2440; }
         .live-status.error { color: var(--error); border-color: #ef444440; }
 
+        /* Diagnostics panel (collapsible, below the source tabs) */
+        .diagnostics {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 16px 0 0 0;
+            overflow: hidden;
+        }
+        .diagnostics > summary {
+            padding: 12px 18px;
+            cursor: pointer;
+            user-select: none;
+            list-style: none;
+            font-size: 0.92rem;
+            font-weight: 600;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(255,255,255,0.02);
+        }
+        .diagnostics > summary::-webkit-details-marker { display: none; }
+        .diagnostics > summary::before {
+            content: '\25B6';
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            transition: transform 0.15s;
+        }
+        .diagnostics[open] > summary::before { transform: rotate(90deg); }
+        .diagnostics-body {
+            padding: 14px 18px 18px 18px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        @media (max-width: 760px) {
+            .diagnostics-body { grid-template-columns: 1fr; }
+        }
+        .diag-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+        .diag-card h3 {
+            margin: 0 0 8px 0;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+        .diag-table { width: 100%; font-size: 0.8rem; border-collapse: collapse; }
+        .diag-table td { padding: 4px 8px; border-bottom: 1px dashed var(--border); }
+        .diag-table tr:last-child td { border-bottom: none; }
+        .diag-table td:first-child { color: var(--text-muted); width: 50%; }
+        .diag-table td:last-child { font-family: 'Inter', monospace; text-align: right; }
+        .diag-good { color: var(--success); }
+        .diag-warn { color: var(--warn); }
+        .diag-bad  { color: var(--error); }
+        .diag-blink { animation: blink 1.5s ease-in-out infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        .live-log {
+            background: #0b1220;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            height: 220px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: var(--text);
+        }
+        .live-log .line { display: block; }
+        .live-log .line.seq-z { color: #94c4ff; }
+        .live-log .line.seq-c { color: #ffc994; }
+        .live-log .line.error { color: var(--error); }
+        .live-log-pause { font-size: 0.78rem; color: var(--text-muted); margin-left: 8px; }
+
         /* Tabs */
         .source-tabs {
             display: flex;
@@ -474,6 +556,32 @@
             </button>
         </div>
 
+        <!-- Diagnostics panel: live stats + tail of ALL logs from both sources -->
+        <details class="diagnostics" id="diag-panel">
+            <summary>
+                <span>&#128202; Diagnostics &amp; Live Logs</span>
+                <span id="diag-header-status" class="live-log-pause">—</span>
+            </summary>
+            <div class="diagnostics-body">
+                <div>
+                    <div class="diag-card">
+                        <h3>Zitobox</h3>
+                        <table class="diag-table"><tbody id="diag-tbody-zitobox"></tbody></table>
+                    </div>
+                    <div class="diag-card" style="margin-top:12px">
+                        <h3>CarnivalCiti</h3>
+                        <table class="diag-table"><tbody id="diag-tbody-carnivalciti"></tbody></table>
+                    </div>
+                </div>
+                <div>
+                    <div class="diag-card">
+                        <h3>Live Logs (both sources) <span class="live-log-pause">auto-refresh 2s · newest at bottom</span></h3>
+                        <div id="live-log-viewer" class="live-log">—</div>
+                    </div>
+                </div>
+            </div>
+        </details>
+
         <!-- Game tabs (one per game for the active source) -->
         <div class="game-tabs" id="game-tabs">
             <div class="muted" style="padding:8px 12px; font-size:0.82rem;">Loading...</div>
@@ -528,7 +636,23 @@
         // ─── Init ───────────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', () => {
             refreshAll();
+            refreshDiagnostics();
+            // Diagnostics = same 15s cadence as the main refresh.
             setInterval(refreshAll, 15000);
+            setInterval(refreshDiagnostics, 15000);
+            // Live log = 2s cadence (cheap: just increments one JSON
+            // poll each). Run on a single interval, not per-source.
+            setInterval(refreshLiveLog, 2000);
+            // When the panel opens, seed it with whatever the 2s
+            // tail already has. When it closes, keep tracking seq so
+            // we don't lose offsets.
+            document.getElementById('diag-panel').addEventListener('toggle', (ev) => {
+                if (ev.target.open) {
+                    refreshDiagnostics();
+                    refreshLiveLog();
+                    renderLiveLog();
+                }
+            });
         });
 
         // ─── Data fetch ─────────────────────────────────────────────────────
@@ -874,6 +998,7 @@
                 if (!d.ok) alert('Error starting ' + src + ': ' + (d.error || 'unknown'));
             } finally {
                 refreshAll();
+                refreshDiagnostics();
             }
         }
         async function stopOne(src) {
@@ -886,6 +1011,7 @@
                 if (!d.ok) alert('Error stopping ' + src + ': ' + (d.error || 'unknown'));
             } finally {
                 refreshAll();
+                refreshDiagnostics();
             }
         }
         // Per-source button visibility — driven by sourcesState[name].active
@@ -905,6 +1031,119 @@
                 if (startBtn.textContent === '...') startBtn.textContent = '▶ ' + k.toUpperCase();
                 if (stopBtn.textContent === '...') stopBtn.textContent = '■ ' + k.toUpperCase();
             });
+        }
+
+        // ─── Diagnostics panel ──────────────────────────────────────────────
+        // Tracks the highest seq we've seen per source so each /api/log-tail
+        // call only fetches the delta. Persists across panel open/close so
+        // you can collapse/expand without losing the offset.
+        const diagState = {
+            zitobox: { lastSeq: 0, lines: [] },        // FIFO list for live viewer
+            carnivalciti: { lastSeq: 0, lines: [] },
+            panelOpen: false,
+            lastData: null,
+        };
+
+        function formatUptime(seconds) {
+            if (!seconds && seconds !== 0) return '\u2014';
+            seconds = Math.floor(seconds);
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            return h > 0 ? `${h}h ${m}m` : (m > 0 ? `${m}m ${s}s` : `${s}s`);
+        }
+
+        function renderDiagTable(name, data) {
+            const tbody = document.getElementById('diag-tbody-' + name);
+            if (!tbody || !data) return;
+            const rate = data.success_rate;
+            const rateCls = rate == null ? '' :
+                            rate >= 0.95 ? 'diag-good' :
+                            rate >= 0.7  ? 'diag-warn' : 'diag-bad';
+            // Detect zombie worker: active=False but thread still alive.
+            const zombie = !data.active && data.thread_alive;
+            const zombieCls = zombie ? 'diag-bad' : '';
+            const zombieText = zombie ? 'ZOMBIE' : (data.active ? (data.stopping ? 'draining...' : 'running') : 'idle');
+            const stopEvtCls = data.stop_event_set && !data.active ? 'diag-warn' : '';
+            const lastRun = data.last_run ? new Date(data.last_run).toLocaleTimeString() : '\u2014';
+            const nextRun = data.next_run ? new Date(data.next_run).toLocaleTimeString() : '\u2014';
+            tbody.innerHTML =
+                `<tr><td>state</td><td class="${zombieCls}">${zombieText}</td></tr>` +
+                `<tr><td>cycles (ok / err)</td><td>${data.successful_cycles} / ${data.error_cycles}</td></tr>` +
+                `<tr><td>success rate</td><td class="${rateCls}">${rate == null ? '\u2014' : (rate*100).toFixed(1)+'%'}</td></tr>` +
+                `<tr><td>avg duration</td><td>${data.avg_cycle_duration == null ? '\u2014' : data.avg_cycle_duration.toFixed(1)+'s'}</td></tr>` +
+                `<tr><td>last 5 durations</td><td>${(data.last_5_durations||[]).map(d=>d.toFixed(0)+'s').join(' \u00b7 ') || '\u2014'}</td></tr>` +
+                `<tr><td>last run</td><td>${lastRun} (${data.last_run_duration ? data.last_run_duration.toFixed(1)+'s' : '\u2014'})</td></tr>` +
+                `<tr><td>last status</td><td>${escapeHtml(data.last_run_status || '\u2014')}</td></tr>` +
+                `<tr><td>next run</td><td>${nextRun}</td></tr>` +
+                `<tr><td>uptime cap (8h)</td><td>${data.start_time ? 'active' : '\u2014'}</td></tr>`;
+        }
+
+        async function refreshDiagnostics() {
+            try {
+                const r = await fetch('/api/diagnostics');
+                const d = await r.json();
+                diagState.lastData = d;
+                renderDiagTable('zitobox', d.sources.zitobox);
+                renderDiagTable('carnivalciti', d.sources.carnivalciti);
+                // Header status — show process info quickly
+                const proc = d.process || {};
+                const lfExists = proc.log_file_exists ? Math.round((proc.log_file_bytes||0)/1024) + 'KB' : 'no log';
+                document.getElementById('diag-header-status').textContent =
+                    `pid ${proc.pid || '?'} \u00b7 log ${lfExists} \u00b7 uptime ${formatUptime(proc.uptime_seconds)}`;
+            } catch (e) {
+                document.getElementById('diag-header-status').textContent = 'offline';
+            }
+        }
+
+        // Live log: poll both sources every 2s. Use a single FIFO buffer
+        // of MAX_LINES so the viewer doesn't grow unbounded across hours.
+        const LIVE_LOG_MAX = 300;
+        async function refreshLiveLog() {
+            try {
+                // Fetch delta per source IN PARALLEL
+                const fetches = ['zitobox', 'carnivalciti'].map(async src => {
+                    const st = diagState[src];
+                    const r = await fetch('/api/log-tail?source=' + src + '&after=' + st.lastSeq);
+                    const d = await r.json();
+                    if (!d.ok) return;
+                    if (d.out_of_window) {
+                        // Buffer rotated past us — flush and reload full.
+                        st.lines = [];
+                        st.lastSeq = 0;
+                    }
+                    for (const line of d.lines) {
+                        st.lines.push({ seq: line.seq, text: line.text });
+                        st.lastSeq = Math.max(st.lastSeq, line.seq);
+                    }
+                    if (st.lines.length > LIVE_LOG_MAX) {
+                        st.lines.splice(0, st.lines.length - LIVE_LOG_MAX);
+                    }
+                });
+                await Promise.all(fetches);
+                renderLiveLog();
+            } catch (e) { /* offline ok */ }
+        }
+
+        function renderLiveLog() {
+            const el = document.getElementById('live-log-viewer');
+            if (!el) return;
+            // Merge both sources and sort by seq. Cheap because each list is bounded to LIVE_LOG_MAX.
+            const merged = []
+                .concat(diagState.zitobox.lines.map(l => ({...l, _src:'z'})))
+                .concat(diagState.carnivalciti.lines.map(l => ({...l, _src:'c'})))
+                .sort((a, b) => a.seq - b.seq);
+            if (merged.length === 0) {
+                el.innerHTML = '<span style="color:var(--text-muted)">— no logs yet —</span>';
+                return;
+            }
+            // Auto-scroll-to-bottom only if user was already at bottom.
+            const wasAtBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 20;
+            el.innerHTML = merged.map(l => {
+                const errCls = / ERROR[: ]/.test(l.text) ? ' error' : '';
+                return `<span class="line seq-${l._src}${errCls}">${escapeHtml(l.text)}</span>`;
+            }).join('');
+            if (wasAtBottom) el.scrollTop = el.scrollHeight;
         }
         // Force Scrape: only the currently selected source (useful for
         // debugging a single scraper without disturbing the other).

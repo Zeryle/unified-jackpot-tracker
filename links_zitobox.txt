@@ -1,0 +1,6 @@
+# Zitobox games: name | jackpot_display | url
+# (jackpot_display overrides the auto-extracted name in the dashboard)
+Lightning Fruits|Frutti Jackpot (Melon)|https://www.zitobox.com/game/slotgame/Lightning-Fruits/5862/9/2/00
+101 Lions (Super Jackpot)|Super Jackpot|https://www.zitobox.com/game/slotgame/101-Lions-T2/5848/8/2/0
+Sacred Flower (Grand Jackpot)|Grand Jackpot|https://www.zitobox.com/game/slotgame/Sacred-Flower-T2/5870/10/2/0
+Pegasus (Jackpot Legend Link)|Jackpot Legend Link|https://www.zitobox.com/game/slotgame/Pegasus-T2/5920/7/2/0

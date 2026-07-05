@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Jackpot Tracker · Unified</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #38bdf8;
+            --primary-hover: #0ea5e9;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --card-bg-light: #334155;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --success: #34d399;
+            --warn: #fbbf24;
+            --error: #ef4444;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            margin: 0;
+            padding: 30px 20px;
+            background-color: var(--bg);
+            color: var(--text);
+        }
+        .container { max-width: 1180px; margin: 0 auto; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 22px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .header-text h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #38bdf8, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header-text .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-top: 4px; }
+        .header-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+        /* Control bar */
+        .control-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 18px;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .control-bar .left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.88rem;
+            color: var(--text-muted);
+        }
+        .control-bar .right { display: flex; gap: 8px; align-items: center; }
+        .control-bar select {
+            background: var(--card-bg-light);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-family: inherit;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
+        /* Pills (Zitobox-style buttons) */
+        .pill {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-muted);
+        }
+        .pill:hover { color: var(--text); border-color: var(--text-muted); }
+        .pill:disabled { opacity: 0.5; cursor: not-allowed; }
+        .pill.primary { background: var(--primary); color: var(--bg); border-color: var(--primary); }
+        .pill.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+        .pill.danger { color: var(--error); border-color: #ef444460; }
+        .pill.danger:hover { background: #ef444415; border-color: var(--error); }
+        .pill.success { color: var(--success); border-color: #34d39940; }
+        .pill.success:hover { background: #34d39915; border-color: var(--success); }
+
+        .live-status {
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            padding: 8px 14px;
+            border-radius: 20px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        .live-status.ok { color: var(--success); border-color: #34d39940; }
+        .live-status.warn { color: var(--warn); border-color: #fbbf2440; }
+        .live-status.error { color: var(--error); border-color: #ef444440; }
+
+        /* Tabs */
+        .source-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 0;
+            border-bottom: 2px solid var(--border);
+        }
+        .source-tab {
+            padding: 10px 22px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.92rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            margin-bottom: -2px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .source-tab:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+        .source-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+        .source-tab .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #475569;
+        }
+        .source-tab.active .dot.running { background: var(--success); box-shadow: 0 0 6px #34d39980; }
+        .source-tab.active .dot.idle { background: var(--warn); }
+
+        .game-tabs {
+            display: flex;
+            gap: 2px;
+            background: var(--card-bg);
+            border-radius: 0 0 8px 8px;
+            border: 1px solid var(--border);
+            border-top: none;
+            padding: 6px;
+            overflow-x: auto;
+        }
+        .game-tab {
+            padding: 7px 14px;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.82rem;
+            font-weight: 500;
+            border-radius: 5px;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .game-tab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+        .game-tab.active { color: var(--text); background: var(--card-bg-light); border-color: var(--border); }
+        .game-tab .src-badge {
+            font-size: 0.65rem;
+            padding: 1px 5px;
+            border-radius: 8px;
+            background: rgba(56, 189, 248, 0.15);
+            color: var(--primary);
+            margin-left: 5px;
+        }
+
+        .tab-content {
+            display: none;
+            background: var(--card-bg);
+            border-radius: 0 0 12px 12px;
+            padding: 20px;
+            border: 1px solid var(--border);
+            border-top: none;
+        }
+        .tab-content.active { display: block; }
+
+        .table-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .table-actions .info { color: var(--text-muted); font-size: 0.85rem; }
+        .table-actions .info .yellow-dot {
+            display: inline-block;
+            width: 12px; height: 12px;
+            background: #fbbf24;
+            border-radius: 3px;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        .actions-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+        .copy-btn {
+            background: var(--card-bg-light);
+            border: 1px solid var(--border);
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-family: inherit;
+            color: var(--text-muted);
+            transition: all 0.2s;
+        }
+        .copy-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+        .copy-col-btn {
+            background: var(--primary);
+            color: var(--bg);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 600;
+            font-family: inherit;
+        }
+        .copy-col-btn:hover { background: var(--primary-hover); }
+
+        .scrape-game-btn {
+            background: var(--card-bg-light);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            padding: 5px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 600;
+            font-family: inherit;
+            margin-left: 10px;
+            vertical-align: middle;
+            transition: all 0.2s;
+        }
+        .scrape-game-btn:hover { background: var(--primary); color: var(--bg); }
+        .scrape-game-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .scrape-game-btn.running { color: var(--warn); border-color: var(--warn); }
+
+        .delete-sel-btn {
+            background: transparent;
+            border: 1px solid #ef444470;
+            color: var(--error);
+            padding: 7px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 600;
+            font-family: inherit;
+            transition: all 0.2s;
+            display: none;
+        }
+        .delete-sel-btn.visible { display: inline-flex; align-items: center; gap: 6px; }
+        .delete-sel-btn:hover { background: #ef444415; border-color: var(--error); }
+
+        .selection-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            background: rgba(56, 189, 248, 0.08);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 0.85rem;
+            color: var(--primary);
+            font-weight: 500;
+            margin-bottom: 12px;
+        }
+        .selection-bar.visible { display: flex; }
+        .selection-bar .sel-count { flex: 1; }
+        .selection-bar button {
+            background: none; border: none; color: var(--primary);
+            cursor: pointer; font-size: 0.82rem; font-family: inherit; padding: 0;
+        }
+
+        table { border-collapse: collapse; width: 100%; }
+        th, td { padding: 14px 16px; text-align: left; }
+        th {
+            background-color: var(--card-bg-light);
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            border-bottom: 1px solid var(--border);
+        }
+        td { border-bottom: 1px solid var(--border); }
+        tr:last-child td { border-bottom: none; }
+        tr:hover { background-color: rgba(255,255,255,0.02); }
+        .jackpot-hit { background-color: rgba(251, 191, 36, 0.15) !important; }
+
+        /* New-row highlight (top of table) — used by the live update
+           so the user sees new data land without a page reload. */
+        tr.row-new { animation: row-new-flash 1.6s ease-out; }
+        @keyframes row-new-flash {
+            0% { background-color: rgba(56, 189, 248, 0.35) !important; }
+            100% { background-color: transparent; }
+        }
+        .jackpot-hit td { color: #fbbf24; }
+        .val { font-variant-numeric: tabular-nums; font-weight: 600; color: #34d399; font-size: 1rem; }
+
+        .col-check { width: 44px; padding: 14px 8px 14px 16px; }
+        .row-checkbox { width: 17px; height: 17px; cursor: pointer; accent-color: var(--primary); border-radius: 4px; }
+        .check-header { width: 44px; padding: 14px 8px 14px 16px; }
+        .select-all-checkbox { width: 17px; height: 17px; cursor: pointer; accent-color: var(--primary); }
+        tr.row-selected { background-color: rgba(56, 189, 248, 0.07) !important; }
+        tr.row-selected td { border-bottom-color: rgba(56, 189, 248, 0.15); }
+
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+        .empty-state .icon { font-size: 2.5rem; margin-bottom: 12px; }
+
+        /* Modal (identical to Zitobox) */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none; align-items: center; justify-content: center;
+            z-index: 2000; backdrop-filter: blur(8px);
+            opacity: 0; transition: opacity 0.3s ease;
+        }
+        .modal-overlay.active { display: flex; opacity: 1; }
+        .modal {
+            background: var(--card-bg);
+            border-radius: 20px;
+            width: 90%; max-width: 460px;
+            padding: 32px;
+            border: 1px solid var(--border);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+            transform: scale(0.9) translateY(20px);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .modal-overlay.active .modal { transform: scale(1) translateY(0); }
+        .modal-title {
+            font-size: 1.4rem; font-weight: 700; margin-bottom: 16px;
+            color: #ef4444;
+            display: flex; align-items: center; gap: 12px;
+        }
+        .modal-message { color: var(--text-muted); line-height: 1.6; margin-bottom: 20px; font-size: 0.95rem; }
+        .modal-irreversible {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            border-radius: 8px; padding: 10px 14px; font-size: 0.85rem;
+            color: #fca5a5; margin-bottom: 24px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .delete-preview {
+            background: var(--card-bg-light);
+            border-radius: 8px;
+            max-height: 160px; overflow-y: auto;
+            margin-bottom: 24px; border: 1px solid var(--border);
+        }
+        .delete-preview-item {
+            padding: 8px 14px; font-size: 0.82rem;
+            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between;
+            color: var(--text-muted);
+        }
+        .delete-preview-item:last-child { border-bottom: none; }
+        .delete-preview-item .dpi-val { color: #34d399; font-weight: 600; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 12px; }
+        .btn-modal {
+            padding: 12px 24px; border-radius: 12px; cursor: pointer;
+            font-weight: 600; font-family: inherit; font-size: 0.9rem;
+            transition: all 0.2s; border: none;
+        }
+        .btn-modal-cancel {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        .btn-modal-confirm {
+            background: #ef4444; color: white;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+        .btn-modal-cancel:hover { background: rgba(255,255,255,0.1); border-color: var(--text-muted); }
+        .btn-modal-confirm:hover { background: #dc2626; transform: translateY(-2px); box-shadow: 0 6px 15px rgba(239, 68, 68, 0.4); }
+        .btn-modal:active { transform: scale(0.98); }
+    </style>
+</head>
+<body>
+    <!-- Modals -->
+    <div id="clear-source-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-title" id="clear-source-title">&#128465; Clear Data?</div>
+            <div class="modal-message" id="clear-source-message">Are you sure?</div>
+            <div class="modal-irreversible">This action is <strong>&nbsp;irreversible</strong> and cannot be undone.</div>
+            <div class="modal-footer">
+                <button class="btn-modal btn-modal-cancel" onclick="closeModal('clear-source-modal')">Cancel</button>
+                <button id="clear-source-confirm-btn" class="btn-modal btn-modal-confirm" onclick="confirmClearSource()">Yes, Wipe</button>
+            </div>
+        </div>
+    </div>
+    <div id="delete-sel-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-title">&#128465; Delete Selected?</div>
+            <div class="modal-message">You are about to delete <strong id="del-sel-count"></strong> record(s).</div>
+            <div id="del-sel-preview" class="delete-preview"></div>
+            <div class="modal-irreversible">This action is <strong>&nbsp;irreversible</strong> and cannot be undone.</div>
+            <div class="modal-footer">
+                <button class="btn-modal btn-modal-cancel" onclick="closeModal('delete-sel-modal')">Cancel</button>
+                <button id="del-sel-confirm-btn" class="btn-modal btn-modal-confirm" onclick="proceedDeleteSelected()">Delete</button>
+            </div>
+        </div>
+    </div>
+    <div id="confirm-clearall-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-title">&#128465; Clear All Data?</div>
+            <div class="modal-message">This will delete ALL jackpot history for BOTH sources and <strong>stop tracking</strong>. Restart manually from the control bar to resume. (Stopping prevents the next cycle from immediately repopulating the data you just wiped.)</div>
+            <div class="modal-irreversible">This action is <strong>&nbsp;irreversible</strong> and cannot be undone.</div>
+            <div class="modal-footer">
+                <button class="btn-modal btn-modal-cancel" onclick="closeModal('confirm-clearall-modal')">Keep Data</button>
+                <button id="confirm-clearall-btn" class="btn-modal btn-modal-confirm" onclick="proceedClearAll()">Yes, Wipe &amp; Stop</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-text">
+                <h1>Jackpot Tracker · Unified</h1>
+                <div class="subtitle" id="subtitle">Tracking jackpots across Zitobox and CarnivalCiti.</div>
+            </div>
+            <div class="header-right">
+                <button class="pill danger" onclick="openClearAll()">&#128465; Clear All Data</button>
+                <div id="live-status" class="live-status">&#128308; Connecting...</div>
+            </div>
+        </div>
+
+        <!-- Control bar (Start/Stop/Force Scrape) -->
+        <div class="control-bar">
+            <div class="left">
+                <span>Tracking:</span>
+                <select id="source-select" onchange="onSourceSelectChange()">
+                    <option value="zitobox">Zitobox</option>
+                    <option value="carnivalciti">CarnivalCiti</option>
+                </select>
+                <span id="source-summary" class="muted">—</span>
+            </div>
+            <div class="right">
+                <button id="start-btn" class="pill primary" onclick="startAll()">Start Tracking (Both)</button>
+                <button id="stop-btn" class="pill" onclick="stopAll()" style="display:none">Stop All</button>
+                <button id="force-btn" class="pill" onclick="forceScrapeSelected()">Force Scrape (selected source)</button>
+            </div>
+        </div>
+
+        <!-- Source tabs (Zitobox / CarnivalCiti) -->
+        <div class="source-tabs" id="source-tabs">
+            <button class="source-tab active" data-source="zitobox" onclick="switchSource('zitobox')">
+                <span class="dot" id="dot-zitobox"></span>Zitobox
+            </button>
+            <button class="source-tab" data-source="carnivalciti" onclick="switchSource('carnivalciti')">
+                <span class="dot" id="dot-carnivalciti"></span>CarnivalCiti
+            </button>
+        </div>
+
+        <!-- Game tabs (one per game for the active source) -->
+        <div class="game-tabs" id="game-tabs">
+            <div class="muted" style="padding:8px 12px; font-size:0.82rem;">Loading...</div>
+        </div>
+
+        <!-- Tab contents (one table per game) -->
+        <div id="tab-contents">
+            <div class="empty-state">
+                <div class="icon">&#128368;</div>
+                <div>Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ─── State ──────────────────────────────────────────────────────────
+        let currentSource = 'zitobox';
+        let games = { zitobox: [], carnivalciti: [] };
+        let sourcesState = { zitobox: null, carnivalciti: null };
+        let knownLatestId = 0;
+        let newDataFlashTimer = null;
+        // Persistent checkbox selections, keyed by "source:code" -> Set<rowId>.
+        // Stored outside the DOM so they survive soft refreshes (which
+        // rebuild the table tbody and would otherwise wipe every
+        // checked box while the user is trying to copy).
+        const selectedRows = new Map();
+        // Set true after the first refresh builds the tab DOM. Periodic
+        // refreshes skip the heavy rebuild and just refresh data in
+        // place; that is what keeps selections alive across the 15s
+        // soft-refresh tick.
+        let tabsBuilt = false;
+        // Last seen signature of the game list (codes per source). When
+        // this changes (a new game was added to a links file), we
+        // rebuild the tabs. Otherwise we soft-refresh in place.
+        let lastGamesSignature = '';
+        const pendingDelete = { source: null, code: null, ids: [] };
+        const clearAllPending = { source: null };
+
+        function selKey(source, code) { return source + ':' + code; }
+        function getSelectedSet(source, code) {
+            const k = selKey(source, code);
+            if (!selectedRows.has(k)) selectedRows.set(k, new Set());
+            return selectedRows.get(k);
+        }
+        function gamesSignature() {
+            return JSON.stringify([
+                games.zitobox.map(g => g.code),
+                games.carnivalciti.map(g => g.code),
+            ]);
+        }
+
+        // ─── Init ───────────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshAll();
+            setInterval(refreshAll, 15000);
+        });
+
+        // ─── Data fetch ─────────────────────────────────────────────────────
+        async function refreshAll() {
+            try {
+                const [gamesResp, statusResp, sourcesResp] = await Promise.all([
+                    fetch('/api/games').then(r => r.json()),
+                    fetch('/api/status').then(r => r.json()),
+                    fetch('/api/sources').then(r => r.json()),
+                ]);
+                games.zitobox = gamesResp.games.filter(g => g.source === 'zitobox');
+                games.carnivalciti = gamesResp.games.filter(g => g.source === 'carnivalciti');
+                sourcesState.zitobox = sourcesResp.sources.find(s => s.name === 'zitobox');
+                sourcesState.carnivalciti = sourcesResp.sources.find(s => s.name === 'carnivalciti');
+
+                // Detect new data FIRST so we can refresh the affected tables in place
+                const newId = statusResp.latest_id || 0;
+                const hasNewData = knownLatestId && newId > knownLatestId;
+                knownLatestId = newId || knownLatestId;
+
+                // Always cheap: update dots and live status counters.
+                renderSourceTabs();
+                renderLiveStatus(statusResp);
+
+                // Build tabs only on the first refresh OR when the game
+                // list actually changed (a new game was added to a
+                // links file). On the normal 15s soft-refresh tick we
+                // skip the DOM rebuild and just refresh the data in
+                // place, which is what keeps the user's checkbox
+                // selections alive.
+                const sig = gamesSignature();
+                const gamesChanged = sig !== lastGamesSignature;
+                lastGamesSignature = sig;
+                if (!tabsBuilt || gamesChanged) {
+                    renderGameTabs();
+                    renderTabContents();
+                    tabsBuilt = true;
+                } else {
+                    const all = [...games.zitobox, ...games.carnivalciti];
+                    for (const g of all) loadHistory(g.source, g.code, /*inPlace*/ true);
+                }
+
+                if (hasNewData) {
+                    flashNewData();
+                    // Refresh history for every game we know about, in place
+                    const all = [...games.zitobox, ...games.carnivalciti];
+                    await Promise.all(all.map(g => loadHistory(g.source, g.code, /*inPlace*/ true)));
+                }
+            } catch (err) {
+                console.error('Refresh error:', err);
+                document.getElementById('live-status').textContent = '\u25CB Offline';
+            }
+        }
+
+        function flashNewData() {
+            const liveEl = document.getElementById('live-status');
+            if (newDataFlashTimer) clearTimeout(newDataFlashTimer);
+            const orig = liveEl.textContent;
+            const origClass = liveEl.className;
+            liveEl.textContent = '\u2728 New data!';
+            liveEl.className = 'live-status warn';
+            newDataFlashTimer = setTimeout(() => {
+                // Re-render the live status so it goes back to Tracking/Offline
+                renderLiveStatus({});
+            }, 1800);
+        }
+
+        // ─── Render: source tabs ────────────────────────────────────────────
+        function renderSourceTabs() {
+            ['zitobox', 'carnivalciti'].forEach(name => {
+                const dot = document.getElementById('dot-' + name);
+                const st = sourcesState[name];
+                if (!st) { dot.className = 'dot'; return; }
+                dot.className = 'dot ' + (st.active ? 'running' : 'idle');
+            });
+        }
+
+        // ─── Render: game tabs (only for active source) ───────────────────
+        function renderGameTabs() {
+            const container = document.getElementById('game-tabs');
+            const list = games[currentSource] || [];
+            if (list.length === 0) {
+                container.innerHTML = '<div class="muted" style="padding:8px 12px;font-size:0.82rem;">No games configured for ' + currentSource + '.</div>';
+                return;
+            }
+            // Save current active game (or default to first)
+            const saved = localStorage.getItem('activeGame-' + currentSource);
+            const activeCode = (saved && list.find(g => g.code === saved)) ? saved : list[0].code;
+            localStorage.setItem('activeGame-' + currentSource, activeCode);
+            container.innerHTML = list.map(g => {
+                const isActive = g.code === activeCode;
+                return '<button class="game-tab ' + (isActive ? 'active' : '') + '" data-code="' + g.code + '" onclick="switchGame(\'' + g.code + '\')">' + escapeHtml(g.name) + '</button>';
+            }).join('');
+        }
+
+        // ─── Render: tab contents (tables) ──────────────────────────────────
+        function renderTabContents() {
+            const container = document.getElementById('tab-contents');
+            const list = games[currentSource] || [];
+            if (list.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">&#128368;</div><div>No games configured.</div></div>';
+                return;
+            }
+            const activeCode = localStorage.getItem('activeGame-' + currentSource) || list[0].code;
+            container.innerHTML = list.map(g => {
+                const isActive = g.code === activeCode;
+                const tableId = 'tbl-' + currentSource + '-' + g.code;
+                return '<div id="tab-' + currentSource + '-' + g.code + '" class="tab-content ' + (isActive ? 'active' : '') + '">'
+                    + renderTableHTML(currentSource, g, tableId)
+                    + '</div>';
+            }).join('');
+            // After render, fetch history for each game
+            list.forEach(g => loadHistory(currentSource, g.code));
+        }
+
+        function renderTableHTML(source, game, tableId) {
+            const tabId = 'tab-' + source + '-' + game.code;
+            const selBarId = 'sel-bar-' + tabId;
+            const delBtnId = 'del-btn-' + tabId;
+            const scrapeBtnId = 'scrape-btn-' + tabId;
+            return ''
+                + '<div class="table-actions">'
+                + '  <div class="info">'
+                + '    <span class="yellow-dot"></span> = jackpot reset &nbsp;|&nbsp;'
+                + '    <button id="' + scrapeBtnId + '" class="scrape-game-btn" '
+                + '      onclick="scrapeGame(\'' + source + '\', \'' + game.code + '\')">'
+                + '      &#8635; Scrape'
+                + '    </button>'
+                + '  </div>'
+                + '  <div class="actions-right">'
+                + '    <button id="' + delBtnId + '" class="delete-sel-btn" onclick="openDeleteSelected(\'' + source + '\', \'' + game.code + '\')">'
+                + '      &#128465; Delete Selected (<span class="del-count-label">0</span>)'
+                + '    </button>'
+                + '    <button class="copy-col-btn" onclick="copyColumn(\'' + source + '\', \'' + game.code + '\')">Copy Selected / All</button>'
+                + '  </div>'
+                + '</div>'
+                + '<div id="' + selBarId + '" class="selection-bar">'
+                + '  <span class="sel-count"><span id="sel-count-num-' + tabId + '">0</span> row(s) selected</span>'
+                + '  <button onclick="clearSelection(\'' + source + '\', \'' + game.code + '\')">Clear selection</button>'
+                + '</div>'
+                + '<div id="loading-' + tabId + '" class="empty-state"><div class="icon">&#8987;</div><div>Loading history...</div></div>'
+                + '<table id="' + tableId + '" style="display:none">'
+                + '  <thead><tr>'
+                + '    <th class="check-header"><input type="checkbox" class="select-all-checkbox" id="chk-all-' + tabId + '" onchange="toggleSelectAll(\'' + source + '\', \'' + game.code + '\', this)"></th>'
+                + '    <th>Timestamp</th>'
+                + '    <th>Jackpot Name</th>'
+                + '    <th>Value</th>'
+                + '    <th>Actions</th>'
+                + '  </tr></thead>'
+                + '  <tbody></tbody>'
+                + '</table>';
+        }
+
+        // ─── Load history for a game ───────────────────────────────────────
+        async function loadHistory(source, code, inPlace = false) {
+            const tabId = 'tab-' + source + '-' + code;
+            const table = document.getElementById('tbl-' + source + '-' + code);
+            const loading = document.getElementById('loading-' + tabId);
+            try {
+                const resp = await fetch('/api/history?source=' + source + '&code=' + code);
+                const data = await resp.json();
+                if (!data.ok) return;
+                renderHistoryTable(source, code, data.history);
+                if (loading) loading.style.display = 'none';
+                if (table) table.style.display = '';
+                if (inPlace) flashNewRows(source, code);
+            } catch (e) {
+                if (loading) loading.innerHTML = '<div class="icon">&#9888;</div><div>Failed to load history</div>';
+            }
+        }
+
+        // Briefly highlight the newly inserted row at the top of the table
+        // so the user sees data land without a page reload.
+        function flashNewRows(source, code) {
+            const tab = document.getElementById('tab-' + source + '-' + code);
+            if (!tab) return;
+            const tbody = tab.querySelector('tbody');
+            if (!tbody) return;
+            const firstRow = tbody.querySelector('tr');
+            if (!firstRow) return;
+            firstRow.classList.add('row-new');
+            setTimeout(() => firstRow.classList.remove('row-new'), 1600);
+        }
+
+        function renderHistoryTable(source, code, history) {
+            const table = document.getElementById('tbl-' + source + '-' + code);
+            if (!table) return;
+            const tbody = table.querySelector('tbody');
+            const sel = getSelectedSet(source, code);
+            if (!history || history.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="empty-state" style="padding:30px">No data yet. Start tracking to collect data.</td></tr>';
+                // Rows are gone — drop the now-stale selection set.
+                sel.clear();
+                return;
+            }
+            // History is oldest-first per /api/history. We want oldest at top too.
+            tbody.innerHTML = history.map(row => {
+                const hitCls = row.is_hit ? ' jackpot-hit' : '';
+                // Re-check the box for any row the user had selected
+                // before this render. This is what preserves
+                // selections across the periodic soft refresh.
+                const checked = sel.has(row.id) ? ' checked' : '';
+                const selCls = sel.has(row.id) ? ' row-selected' : '';
+                return '<tr class="' + hitCls.trim() + selCls + '" data-row-id="' + row.id + '" data-row-ts="' + row.timestamp + '" data-row-val="' + row.value + '">'
+                    + '<td class="col-check"><input type="checkbox" class="row-checkbox" onchange="onRowCheck(\'' + source + '\', \'' + code + '\', this)"' + checked + '></td>'
+                    + '<td>' + row.timestamp + '</td>'
+                    + '<td>' + escapeHtml(row.jackpot_name || '') + '</td>'
+                    + '<td class="val">' + Math.round(Number(row.value)).toLocaleString('en-US') + '</td>'
+                    + '<td><button class="copy-btn" onclick="copySingle(this)">Copy</button></td>'
+                    + '</tr>';
+            }).join('');
+            // Refresh the master checkbox state + counters after the
+            // re-checked boxes are in the DOM.
+            updateSelectionUI(source, code);
+        }
+
+        // ─── Live status ───────────────────────────────────────────────────
+        function renderLiveStatus(statusResp) {
+            const liveEl = document.getElementById('live-status');
+            const subEl = document.getElementById('subtitle');
+            const sourceSummary = document.getElementById('source-summary');
+            const stZ = sourcesState.zitobox;
+            const stC = sourcesState.carnivalciti;
+            const anyActive = (stZ && stZ.active) || (stC && stC.active);
+            const anyError = [stZ, stC].some(s => s && s.last_run_status && String(s.last_run_status).startsWith('error'));
+            if (anyError) {
+                liveEl.textContent = '\u25CF Running (with errors)';
+                liveEl.className = 'live-status error';
+            } else if (anyActive) {
+                liveEl.textContent = '\u25CF Tracking';
+                liveEl.className = 'live-status ok';
+            } else {
+                liveEl.textContent = '\u25CB Offline';
+                liveEl.className = 'live-status';
+            }
+            // Subtitle
+            const total = games.zitobox.length + games.carnivalciti.length;
+            subEl.textContent = 'Tracking jackpots across ' + games.zitobox.length + ' Zitobox + ' + games.carnivalciti.length + ' CarnivalCiti games. Cycles align to the start of each hour.';
+            // Per-source summary
+            const s = sourcesState[currentSource];
+            if (s) {
+                const lastRun = s.last_run ? new Date(s.last_run).toLocaleString() : 'never';
+                const next = s.next_run ? ' next ' + new Date(s.next_run).toLocaleTimeString() : '';
+                const avg = s.avg_cycle_duration;
+                const avgStr = avg ? ` (avg ${formatDuration(avg)})` : '';
+                sourceSummary.textContent = 'Last run: ' + lastRun + avgStr + next;
+            } else {
+                sourceSummary.textContent = '\u2014';
+            }
+            // Control bar buttons: Start/Stop act on BOTH sources.
+            // We show Stop when at least one is running, otherwise Start.
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            const forceBtn = document.getElementById('force-btn');
+            if (anyActive) {
+                startBtn.style.display = 'none';
+                stopBtn.style.display = '';
+            } else {
+                startBtn.style.display = '';
+                stopBtn.style.display = 'none';
+            }
+            if (s && s.force_running) {
+                forceBtn.disabled = true;
+                forceBtn.textContent = 'Scraping\u2026';
+            } else {
+                forceBtn.disabled = false;
+                forceBtn.textContent = 'Force Scrape (selected source)';
+            }
+        }
+
+        // ─── Tabs ───────────────────────────────────────────────────────────
+        function switchSource(source) {
+            currentSource = source;
+            document.querySelectorAll('.source-tab').forEach(b => b.classList.remove('active'));
+            document.querySelector('.source-tab[data-source="' + source + '"]').classList.add('active');
+            document.getElementById('source-select').value = source;
+            renderGameTabs();
+            renderTabContents();
+            // Re-render control bar summary for the new source.
+            // Start/Stop are global (both sources), so the visibility
+            // is driven by "is ANY source running" rather than the
+            // selected source alone.
+            const s = sourcesState[source];
+            if (s) {
+                const lastRun = s.last_run ? new Date(s.last_run).toLocaleString() : 'never';
+                const next = s.next_run ? ' next ' + new Date(s.next_run).toLocaleTimeString() : '';
+                const avg = s.avg_cycle_duration;
+                const avgStr = avg ? ` (avg ${formatDuration(avg)})` : '';
+                document.getElementById('source-summary').textContent = 'Last run: ' + lastRun + avgStr + next;
+                const anyActive = (sourcesState.zitobox && sourcesState.zitobox.active)
+                    || (sourcesState.carnivalciti && sourcesState.carnivalciti.active);
+                const startBtn = document.getElementById('start-btn');
+                const stopBtn = document.getElementById('stop-btn');
+                if (anyActive) { startBtn.style.display = 'none'; stopBtn.style.display = ''; }
+                else { startBtn.style.display = ''; stopBtn.style.display = 'none'; }
+                const forceBtn = document.getElementById('force-btn');
+                if (s.force_running) { forceBtn.disabled = true; forceBtn.textContent = 'Scraping\u2026'; }
+                else { forceBtn.disabled = false; forceBtn.textContent = 'Force Scrape (selected source)'; }
+            }
+            localStorage.setItem('activeSource', source);
+        }
+
+        function onSourceSelectChange() {
+            const sel = document.getElementById('source-select');
+            switchSource(sel.value);
+        }
+
+        function switchGame(code) {
+            const source = currentSource;
+            document.querySelectorAll('.game-tab').forEach(b => b.classList.remove('active'));
+            document.querySelector('.game-tab[data-code="' + code + '"]').classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            const tc = document.getElementById('tab-' + source + '-' + code);
+            if (tc) tc.classList.add('active');
+            localStorage.setItem('activeGame-' + source, code);
+        }
+
+        // ─── Start/Stop/Force ──────────────────────────────────────────────
+        // Start Tracking button: starts BOTH scrapers at once.
+        async function startAll() {
+            const r = await fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            const d = await r.json();
+            if (d.ok) refreshAll();
+        }
+        async function stopAll() {
+            const r = await fetch('/api/stop', { method: 'POST' });
+            const d = await r.json();
+            if (d.ok) refreshAll();
+        }
+        // Force Scrape: only the currently selected source (useful for
+        // debugging a single scraper without disturbing the other).
+        async function scrapeGame(source, code) {
+            const tabId = 'tab-' + source + '-' + code;
+            const btn = document.getElementById('scrape-btn-' + tabId);
+            if (!btn) return;
+            btn.disabled = true;
+            btn.classList.add('running');
+            btn.textContent = 'Scraping...';
+            try {
+                const r = await fetch('/api/force-scrape/' + source + '/' + code, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const d = await r.json();
+                if (!d.ok) { alert(d.error || 'Scrape failed'); return; }
+                // Poll for completion (force_last_result updates when thread finishes)
+                for (let i = 0; i < 60; i++) {  // up to 6 min
+                    await new Promise(r => setTimeout(r, 6000));
+                    const st = sourcesState[source];
+                    const res = st && st.force_last_result;
+                    if (res && res.at) {
+                        await loadHistory(source, code, true);
+                        break;
+                    }
+                }
+            } catch(e) { alert('Scrape error: ' + e); }
+            finally {
+                btn.disabled = false;
+                btn.classList.remove('running');
+                btn.textContent = '\u21bb Scrape';
+            }
+        }
+
+        async function forceScrapeSelected() {
+            const r = await fetch('/api/force-scrape/' + currentSource, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            const d = await r.json();
+            if (d.ok) refreshAll();
+        }
+
+        // ─── Selection / Delete / Copy ─────────────────────────────────────
+        function getSelectedRows(source, code) {
+            const tab = document.getElementById('tab-' + source + '-' + code);
+            if (!tab) return [];
+            // Read from the persistent selection set (not the DOM
+            // checkbox state) so this still works after a soft refresh
+            // rebuilds the tbody. The DOM filter is just a sanity
+            // check to make sure the row is still on screen.
+            const sel = getSelectedSet(source, code);
+            return Array.from(tab.querySelectorAll('tr[data-row-id]')).filter(tr => {
+                const id = parseInt(tr.getAttribute('data-row-id'));
+                return sel.has(id);
+            });
+        }
+        function onRowCheck(source, code, cb) {
+            const tr = cb.closest('tr');
+            const id = parseInt(tr.getAttribute('data-row-id'));
+            const sel = getSelectedSet(source, code);
+            if (cb.checked) {
+                tr.classList.add('row-selected');
+                if (!isNaN(id)) sel.add(id);
+            } else {
+                tr.classList.remove('row-selected');
+                if (!isNaN(id)) sel.delete(id);
+            }
+            updateSelectionUI(source, code);
+        }
+        function toggleSelectAll(source, code, master) {
+            const tab = document.getElementById('tab-' + source + '-' + code);
+            const sel = getSelectedSet(source, code);
+            tab.querySelectorAll('.row-checkbox').forEach(cb => {
+                cb.checked = master.checked;
+                const tr = cb.closest('tr');
+                const id = parseInt(tr.getAttribute('data-row-id'));
+                if (master.checked) {
+                    tr.classList.add('row-selected');
+                    if (!isNaN(id)) sel.add(id);
+                } else {
+                    tr.classList.remove('row-selected');
+                    if (!isNaN(id)) sel.delete(id);
+                }
+            });
+            updateSelectionUI(source, code);
+        }
+        function clearSelection(source, code) {
+            const master = document.getElementById('chk-all-tab-' + source + '-' + code);
+            if (master) master.checked = false;
+            toggleSelectAll(source, code, { checked: false });
+        }
+        function updateSelectionUI(source, code) {
+            const tabId = 'tab-' + source + '-' + code;
+            const sel = getSelectedRows(source, code);
+            const count = sel.length;
+            const bar = document.getElementById('sel-bar-' + tabId);
+            if (bar) bar.classList.toggle('visible', count > 0);
+            const num = document.getElementById('sel-count-num-' + tabId);
+            if (num) num.textContent = count;
+            const delBtn = document.getElementById('del-btn-' + tabId);
+            if (delBtn) {
+                const label = delBtn.querySelector('.del-count-label');
+                if (label) label.textContent = count;
+                delBtn.classList.toggle('visible', count > 0);
+            }
+            const copyBtn = document.querySelector('#' + tabId + ' .copy-col-btn');
+            if (copyBtn) {
+                copyBtn.textContent = count > 0 ? 'Copy Selected (' + count + ')' : 'Copy Selected / All';
+            }
+            const all = document.querySelectorAll('#' + tabId + ' .row-checkbox');
+            const masterCb = document.getElementById('chk-all-' + tabId);
+            if (masterCb && all.length > 0) {
+                if (count === 0) { masterCb.indeterminate = false; masterCb.checked = false; }
+                else if (count === all.length) { masterCb.indeterminate = false; masterCb.checked = true; }
+                else { masterCb.indeterminate = true; }
+            }
+        }
+        function openDeleteSelected(source, code) {
+            const rows = getSelectedRows(source, code);
+            if (rows.length === 0) return;
+            const ids = [];
+            let preview = '';
+            rows.forEach(tr => {
+                const id = tr.getAttribute('data-row-id');
+                const ts = tr.getAttribute('data-row-ts');
+                const val = tr.getAttribute('data-row-val');
+                ids.push(parseInt(id));
+                preview += '<div class="delete-preview-item"><span>' + ts + '</span><span class="dpi-val">' + Math.round(Number(val)).toLocaleString('en-US') + '</span></div>';
+            });
+            pendingDelete.source = source;
+            pendingDelete.code = code;
+            pendingDelete.ids = ids;
+            document.getElementById('del-sel-count').textContent = ids.length;
+            document.getElementById('del-sel-preview').innerHTML = preview;
+            document.getElementById('del-sel-confirm-btn').textContent = 'Delete ' + ids.length + ' Record' + (ids.length > 1 ? 's' : '');
+            openModal('delete-sel-modal');
+        }
+        async function proceedDeleteSelected() {
+            const btn = document.getElementById('del-sel-confirm-btn');
+            btn.disabled = true; btn.textContent = 'Deleting...';
+            try {
+                const r = await fetch('/api/delete-selected', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: pendingDelete.ids }) });
+                let d;
+                try { d = await r.json(); }
+                catch { throw new Error('Server returned HTTP ' + r.status + ' (not JSON). Check the server log.'); }
+                if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                closeModal('delete-sel-modal');
+                loadHistory(pendingDelete.source, pendingDelete.code);
+            } catch (e) {
+                alert('Delete failed: ' + e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = 'Delete';
+            }
+        }
+        function copySingle(btn) {
+            const tr = btn.closest('tr');
+            const val = tr.querySelector('.val').textContent.trim();
+            doFallbackCopy(val);
+            flashButton(btn, 'Copied!');
+        }
+        function copyColumn(source, code) {
+            const sel = getSelectedRows(source, code);
+            let text = '';
+            if (sel.length > 0) {
+                const lines = sel.map(tr => tr.querySelector('.val').textContent.trim());
+                text = lines.join('\n');
+            } else {
+                const vals = document.querySelectorAll('#tab-' + source + '-' + code + ' .val');
+                text = Array.from(vals).map(v => v.textContent.trim()).join('\n');
+            }
+            doFallbackCopy(text);
+            const btn = document.querySelector('#tab-' + source + '-' + code + ' .copy-col-btn');
+            flashButton(btn, 'Copied!');
+        }
+        function flashButton(btn, label) {
+            const orig = btn.textContent;
+            btn.textContent = label;
+            setTimeout(() => { btn.textContent = orig; }, 1500);
+        }
+        function doFallbackCopy(text) {
+            const ta = document.createElement('textarea');
+            ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+            document.body.appendChild(ta); ta.focus(); ta.select();
+            try { document.execCommand('copy'); } catch (e) {}
+            document.body.removeChild(ta);
+        }
+
+        // ─── Clear source / clear all ──────────────────────────────────────
+        function openClearAll() {
+            openModal('confirm-clearall-modal');
+        }
+        async function proceedClearAll() {
+            const btn = document.getElementById('confirm-clearall-btn');
+            btn.disabled = true; btn.textContent = 'Stopping & clearing...';
+            try {
+                // Stop both scrapers FIRST so the next cycle doesn't
+                // immediately repopulate the data we're about to wipe.
+                // (The DB-side delete was also silently failing in an
+                // earlier build, which is why the data kept coming
+                // back — fixed in db.py; this JS now also surfaces
+                // any server error so we don't pretend it worked.)
+                const stopR = await fetch('/api/stop', { method: 'POST' });
+                if (!stopR.ok) throw new Error('Stop request returned HTTP ' + stopR.status);
+                for (const src of ['zitobox', 'carnivalciti']) {
+                    const r = await fetch('/api/clear/' + src, { method: 'POST' });
+                    if (!r.ok) throw new Error('Clear ' + src + ' returned HTTP ' + r.status);
+                }
+                // Wipe all tables in-place (no reload) and reset state
+                knownLatestId = 0;
+                for (const src of ['zitobox', 'carnivalciti']) {
+                    if (selectedRows.has(src)) {
+                        for (const set of selectedRows.get(src).values()) set.clear();
+                    }
+                }
+                const all = [...games.zitobox, ...games.carnivalciti];
+                all.forEach(g => {
+                    const tab = document.getElementById('tab-' + g.source + '-' + g.code);
+                    if (!tab) return;
+                    const tbody = tab.querySelector('tbody');
+                    if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="empty-state" style="padding:30px">No data yet. Start tracking to collect data.</td></tr>';
+                });
+                closeModal('confirm-clearall-modal');
+                // Refresh the source/session UI so the Stop button
+                // disappears and the live status goes Offline.
+                refreshAll();
+            } catch (e) {
+                alert('Clear failed: ' + e.message + '\n\nThe data on the server may not have been wiped. Try again or check the server log.');
+            } finally {
+                // Re-enable button after a tick (in case modal is reopened)
+                setTimeout(() => { btn.disabled = false; btn.textContent = 'Yes, Wipe & Stop'; }, 300);
+            }
+        }
+
+        // ─── Modal helpers ──────────────────────────────────────────────────
+        function openModal(id) {
+            const o = document.getElementById(id);
+            o.style.display = 'flex';
+            setTimeout(() => o.classList.add('active'), 10);
+        }
+        function closeModal(id) {
+            const o = document.getElementById(id);
+            o.classList.remove('active');
+            setTimeout(() => { o.style.display = 'none'; }, 300);
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.active').forEach(o => closeModal(o.id)); });
+
+        function formatDuration(seconds) {
+            if (!seconds || seconds <= 0) return '';
+            const m = Math.floor(seconds / 60);
+            const s = Math.round(seconds % 60);
+            return (m > 0 ? m + 'm' : '') + (s > 0 ? s + 's' : '');
+        }
+
+        function escapeHtml(s) {
+            if (s == null) return '';
+            return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+        }
+
+        // Restore last active source tab
+        (function() {
+            const saved = localStorage.getItem('activeSource');
+            if (saved && (saved === 'zitobox' || saved === 'carnivalciti')) {
+                switchSource(saved);
+            }
+        })();
+    </script>
+</body>
+</html>

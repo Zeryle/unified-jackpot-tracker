@@ -5,15 +5,25 @@
 | Archivo | Cuándo usarlo |
 |---|---|
 | `start.bat` | Modo consola visible. Ves los prints en tiempo real. Útil para debugging. |
-| `start_hidden.vbs` | **Modo 8h desatendido.** Sin ventana. Doble-click → arranca silencioso, te avisa con un MsgBox. |
+| `start_hidden.vbs` | **Modo 8h desatendido.** Sin ventana. Doble-click → arranca silencioso. |
 | `install_startup.vbs` | Autoarranque al iniciar sesión de Windows. Ejecutar **una vez**. |
 | `uninstall_startup.vbs` | Quita el autoarranque. |
+
+## Cómo funciona el autoarranque silencioso
+
+`start_hidden.vbs` invoca `start_hidden_wrapper.bat` con `WindowStyle=0`
+(oculto). El `.bat` detecta `pythonw.exe`, lo arranca con `start /B`,
+y luego prueba que el puerto 5050 esté escuchando. **Todo el output
+queda en `data/tracker_stdout.log`**, así que si algo falla lo puedes
+leer sin abrir consola.
 
 ## Para usarlo normalmente
 
 1. **Doble click en `start_hidden.vbs`** → arranca sin ventana.
-2. Abre `http://127.0.0.1:5050` en el navegador.
-3. Para detener: botón Stop en la UI, o en Task Manager → buscar "pythonw.exe" → End task.
+2. Espera ~5 segundos para que Flask binde.
+3. Abre `http://127.0.0.1:5050` en el navegador.
+4. Para detener: botón Stop en la UI, o **taskkill /F /PID <pid>**
+   (busca el `pythonw.exe` en Task Manager → Details).
 
 ## Para dejarlo siempre corriendo
 
@@ -22,9 +32,9 @@
 
 ## Si algo falla
 
-- Abre el panel "📊 Diagnostics & Live Logs" en la UI — ves success rate, zombies, log en vivo.
+- Abre el panel "📊 Diagnostics & Live Logs" en la UI — success rate, zombies, log en vivo.
 - Log persistente: `data/tracker.log`.
-- Crashes con `python.exe` (no `pythonw`): `data/tracker_stdout.log`.
+- Errores de arranque: `data/tracker_stdout.log` (escrito por el `.bat`).
 
 ## Tests de regresión
 

@@ -651,20 +651,34 @@ class CarnivalCitiScraper:
 
         page.on("response", on_response)
         try:
-            await page.goto(self.GAME_URL_TEMPLATE.format(code=code), wait_until="commit", timeout=120000)
-        except Exception as e:
-            print(f"  [load] {name}: {e}")
-        deadline = datetime.now() + timedelta(seconds=300)   # 5 min
-        while not captured["done"] and datetime.now() < deadline:
-            await asyncio.sleep(3)
-        page.remove_listener("response", on_response)
-        if captured["done"]:
-            v = captured["result"]["value"]
-            n = captured["result"]["jackpot_name"]
-            print(f"  [OK] {name}: {n} = {v:,.2f} SC (CC)")
-            return {"code": code, "name": name, **captured["result"]}
-        print(f"  [WARN] {name}: no CC jackpot within 90s")
-        return {"code": code, "name": name, "error": "no_cc_jackpot"}
+            # domcontentloaded (not commit) — Angular SPA needs to mount
+            # before it issues the jackpot/get poll. commit fires too
+            # early and the listener never captures data.
+            try:
+                await page.goto(self.GAME_URL_TEMPLATE.format(code=code), wait_until="domcontentloaded", timeout=75000)
+            except Exception as e:
+                print(f"  [load] {name}: {e}")
+            # 3-min hard deadline: if the listener hasn't caught the
+            # jackpot by now, it'll never catch it. The previous 5-min
+            # deadline made the last 3-4 games hang far past the
+            # hour-top, leaving the cycle to time out without data.
+            deadline = datetime.now() + timedelta(seconds=180)
+            while not captured["done"] and datetime.now() < deadline:
+                await asyncio.sleep(2)
+            if captured["done"]:
+                v = captured["result"]["value"]
+                n = captured["result"]["jackpot_name"]
+                print(f"  [OK] {name}: {n} = {v:,.2f} SC (CC)")
+                return {"code": code, "name": name, **captured["result"]}
+            print(f"  [WARN] {name}: no CC jackpot within 180s")
+            return {"code": code, "name": name, "error": "no_cc_jackpot"}
+        finally:
+            # Always remove the listener — even on goto exception or
+            # timeout — so it doesn't bleed into the next game.
+            try:
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
 
 
 # ─── Registry ──────────────────────────────────────────────────────────────

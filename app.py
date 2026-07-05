@@ -24,6 +24,7 @@ from scrapers import SCRAPERS, get_scraper
 
 HERE = Path(__file__).resolve().parent
 app = Flask(__name__, template_folder="templates", static_folder="static")
+LOG_FILE = HERE / "data" / "tracker.log"
 
 # Per-source state. Each source has its own worker thread and force-
 # scrape slot. force_scrape runs in a separate daemon thread so it
@@ -64,6 +65,14 @@ def _log(source: str, msg: str) -> None:
     print(line)
     with state_lock:
         sources_state[source]["logs"].append(line)
+    # Persistent disk log (append). Never let I/O break the worker.
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ts_iso = datetime.now().isoformat(timespec="seconds")
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{ts_iso}] [{source}] {msg}\n")
+    except Exception:
+        pass
 
 
 class _SourceLogRedirect:
@@ -173,25 +182,33 @@ def _compute_next_run(state: dict) -> None:
 
 def _source_worker(source: str, stop_event: threading.Event, force_login: bool) -> None:
     scraper = get_scraper(source)
-    _log(source, f"Worker started (force_login={force_login}).")
+    tid = threading.get_ident()
+    _log(source, f"Worker started tid={tid} (force_login={force_login}).")
     start = datetime.now()
     cycle = 0
     while not stop_event.is_set():
+        # Re-check at top of every iteration — defensive against stop
+        # racing with the cycle body. (Root cause fix for "Zitobox
+        # 2nd run does 5 cycles": a stale thread would loop again
+        # otherwise.)
+        if stop_event.is_set():
+            _log(source, f"[tid={tid}] Stop detected at top of loop.")
+            break
         if datetime.now() - start >= MAX_SESSION:
             _log(source, "Reached 8h session cap. Stopping.")
             break
         cycle += 1
         cycle_start = datetime.now()
-        _log(source, f"Cycle #{cycle} starting (force_login={force_login and cycle == 1})...")
+        _log(source, f"[tid={tid}] Cycle #{cycle} starting (force_login={force_login and cycle == 1})...")
         try:
             _with_log_redirect(source, lambda: asyncio.run(scraper.run(force_login=force_login and cycle == 1)))
             with state_lock:
                 sources_state[source]["last_run_status"] = "ok"
-            _log(source, f"Cycle #{cycle} complete.")
+            _log(source, f"[tid={tid}] Cycle #{cycle} complete.")
         except Exception as e:
             with state_lock:
                 sources_state[source]["last_run_status"] = f"error: {e}"
-            _log(source, f"Cycle #{cycle} ERROR: {e}")
+            _log(source, f"[tid={tid}] Cycle #{cycle} ERROR: {e}")
         with state_lock:
             sources_state[source]["last_run"] = datetime.now()
             sources_state[source]["cycle_count"] = cycle
@@ -212,24 +229,23 @@ def _source_worker(source: str, stop_event: threading.Event, force_login: bool) 
         if next_run is None:
             break
         wait_seconds = max(0, int((next_run - datetime.now()).total_seconds()))
-        _log(source, f"Next cycle scheduled for {next_run.strftime('%H:%M:%S')} (waiting {wait_seconds}s)")
+        _log(source, f"[tid={tid}] Next cycle scheduled for {next_run.strftime('%H:%M:%S')} (waiting {wait_seconds}s)")
         for _ in range(wait_seconds):
             if stop_event.is_set():
                 break
             if datetime.now() - start >= MAX_SESSION:
                 break
             time.sleep(1)
-        # NOTE: no post-wait _compute_next_run here — that was the
-        # trigger for the runaway loop. The next iteration of the
-        # while-loop recomputes from the new last_run after the next
-        # cycle completes.
+        # After sleep: while-condition re-checks stop_event itself,
+        # so we don't need an explicit re-check here.
 
     with state_lock:
         sources_state[source]["active"] = False
         sources_state[source]["start_time"] = None
         sources_state[source]["stop_event"] = None
         sources_state[source]["next_run"] = None
-    _log(source, "Worker stopped.")
+        sources_state[source]["stopping"] = False
+    _log(source, f"[tid={tid}] Worker stopped.")
 
 
 def _force_scrape_game_worker(source: str, code: str, force_login: bool) -> None:
@@ -435,15 +451,28 @@ def start_scraper(source: Optional[str] = None):
 def _start_one(source: str, force_login: bool) -> None:
     with state_lock:
         st = sources_state[source]
-        if st["active"]:
+        if st["active"] and not st.get("stopping"):
             return
+        # If a previous worker is still draining from a prior Stop,
+        # wait for it OUTSIDE the lock to keep the API responsive.
+        old_thread = st.get("thread")
+        if old_thread and old_thread.is_alive():
+            with state_lock:
+                st["stopping"] = True
+            old_thread.join(timeout=8)
+        # Reset per-cycle tracking so a fresh Start begins clean.
+        # cycle_durations / avg_cycle_duration used to leak across restarts
+        # and produced schedule drift on quick Start-Stop-Start sequences.
         stop_event = threading.Event()
         st["active"] = True
         st["start_time"] = datetime.now()
         st["stop_event"] = stop_event
+        st["stopping"] = False
         st["last_run"] = None
         st["last_run_status"] = None
         st["cycle_count"] = 0
+        st["cycle_durations"] = []
+        st["avg_cycle_duration"] = None
         st["logs"].clear()
         thread = threading.Thread(
             target=_source_worker,
@@ -454,6 +483,25 @@ def _start_one(source: str, force_login: bool) -> None:
         st["thread"] = thread
         thread.start()
     _log(source, "Source started.")
+
+
+def _stop_one(source: str) -> None:
+    with state_lock:
+        st = sources_state[source]
+        if not st["active"]:
+            return
+        if st["stop_event"]:
+            st["stop_event"].set()
+            st["stopping"] = True
+    # Wait OUTSIDE the lock for the worker thread to actually exit so
+    # a subsequent Start can't race with a still-alive worker (which
+    # was the root cause of the "Zitobox 2nd run loops 5 times" bug).
+    thread = None
+    with state_lock:
+        thread = sources_state[source].get("thread")
+    if thread:
+        thread.join(timeout=8)
+    _log(source, "Stop completed (thread joined).")
 
 
 @app.route("/api/stop", methods=["POST"])
@@ -468,16 +516,6 @@ def stop_scraper(source: Optional[str] = None):
         return jsonify({"ok": False, "error": f"Unknown source: {source}"}), 400
     _stop_one(source)
     return jsonify({"ok": True, "stopped": source})
-
-
-def _stop_one(source: str) -> None:
-    with state_lock:
-        st = sources_state[source]
-        if not st["active"]:
-            return
-        if st["stop_event"]:
-            st["stop_event"].set()
-    _log(source, "Stop requested.")
 
 
 @app.route("/api/force-scrape/<source>/<code>", methods=["POST"])

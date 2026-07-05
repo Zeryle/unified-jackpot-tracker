@@ -455,6 +455,11 @@
             <div class="right">
                 <button id="start-btn" class="pill primary" onclick="startAll()">Start Tracking (Both)</button>
                 <button id="stop-btn" class="pill" onclick="stopAll()" style="display:none">Stop All</button>
+                <span class="muted" style="margin:0 6px">|</span>
+                <button id="start-btn-z" class="pill primary" onclick="startOne('zitobox')">▶ Z</button>
+                <button id="stop-btn-z" class="pill danger" onclick="stopOne('zitobox')" style="display:none">■ Z</button>
+                <button id="start-btn-c" class="pill primary" onclick="startOne('carnivalciti')">▶ C</button>
+                <button id="stop-btn-c" class="pill danger" onclick="stopOne('carnivalciti')" style="display:none">■ C</button>
                 <button id="force-btn" class="pill" onclick="forceScrapeSelected()">Force Scrape (selected source)</button>
             </div>
         </div>
@@ -785,6 +790,8 @@
                 startBtn.style.display = '';
                 stopBtn.style.display = 'none';
             }
+            // Per-source buttons (independent of "any active").
+            syncStartStopBtns();
             if (s && s.force_running) {
                 forceBtn.disabled = true;
                 forceBtn.textContent = 'Scraping\u2026';
@@ -819,6 +826,7 @@
                 const stopBtn = document.getElementById('stop-btn');
                 if (anyActive) { startBtn.style.display = 'none'; stopBtn.style.display = ''; }
                 else { startBtn.style.display = ''; stopBtn.style.display = 'none'; }
+                syncStartStopBtns();
                 const forceBtn = document.getElementById('force-btn');
                 if (s.force_running) { forceBtn.disabled = true; forceBtn.textContent = 'Scraping\u2026'; }
                 else { forceBtn.disabled = false; forceBtn.textContent = 'Force Scrape (selected source)'; }
@@ -852,6 +860,51 @@
             const r = await fetch('/api/stop', { method: 'POST' });
             const d = await r.json();
             if (d.ok) refreshAll();
+        }
+        // Per-source start/stop (▶Z / ■Z / ▶C / ■C).
+        // Disables the button immediately so a fast Start-Stop-Start
+        // sequence can't fire multiple requests before the UI updates.
+        async function startOne(src) {
+            const k = src[0];
+            const btn = document.getElementById('start-btn-' + k);
+            if (btn) { btn.disabled = true; btn.textContent = '...'; }
+            try {
+                const r = await fetch('/api/start/' + src, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const d = await r.json();
+                if (!d.ok) alert('Error starting ' + src + ': ' + (d.error || 'unknown'));
+            } finally {
+                refreshAll();
+            }
+        }
+        async function stopOne(src) {
+            const k = src[0];
+            const btn = document.getElementById('stop-btn-' + k);
+            if (btn) { btn.disabled = true; btn.textContent = '...'; }
+            try {
+                const r = await fetch('/api/stop/' + src, { method: 'POST' });
+                const d = await r.json();
+                if (!d.ok) alert('Error stopping ' + src + ': ' + (d.error || 'unknown'));
+            } finally {
+                refreshAll();
+            }
+        }
+        // Per-source button visibility — driven by sourcesState[name].active
+        // (independent for Z and C so the user can mix-and-match).
+        function syncStartStopBtns() {
+            ['zitobox', 'carnivalciti'].forEach(src => {
+                const k = src[0]; // 'z' or 'c'
+                const startBtn = document.getElementById('start-btn-' + k);
+                const stopBtn = document.getElementById('stop-btn-' + k);
+                if (!startBtn || !stopBtn) return;
+                const st = sourcesState[src];
+                const active = !!(st && st.active);
+                startBtn.style.display = active ? 'none' : '';
+                stopBtn.style.display = active ? '' : 'none';
+                startBtn.disabled = false;
+                stopBtn.disabled = false;
+                if (startBtn.textContent === '...') startBtn.textContent = '▶ ' + k.toUpperCase();
+                if (stopBtn.textContent === '...') stopBtn.textContent = '■ ' + k.toUpperCase();
+            });
         }
         // Force Scrape: only the currently selected source (useful for
         // debugging a single scraper without disturbing the other).

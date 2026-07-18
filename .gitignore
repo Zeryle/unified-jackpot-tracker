@@ -5,3 +5,14 @@ data/
 Safe/
 .vscode/
 .idea/
+
+# Sensitive — CarnivalCiti credentials and Zitobox links live here
+# in dev but are NOT shipped in the public repo. On the VPS they go
+# in /opt/<project>/accessos.txt and links_*.txt (owned by deploy).
+accessos.txt
+carnival_storage.json
+
+# Windows-only artifacts from the dev environment (don't ship)
+*.vbs
+*.bat
+unified_tracker.zip

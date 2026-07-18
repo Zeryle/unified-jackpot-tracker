@@ -580,6 +580,44 @@
                     </div>
                 </div>
             </div>
+            <!-- Export & Filter panel: lets you filter readings by
+                 timestamp range and value range, then copy them to the
+                 clipboard as TSV (pasteable into Excel / Google Sheets). -->
+            <div class="diagnostics-body" style="grid-template-columns: 1fr; border-top: 1px dashed var(--border);">
+                <div class="diag-card">
+                    <h3>📋 Export &amp; Filter <span class="live-log-pause">pasteable into Excel / Google Sheets</span></h3>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px;">
+                        <label style="font-size:0.78rem; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+                            Source
+                            <select id="exp-source" style="background:var(--card-bg-light); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; font-size:0.82rem;">
+                                <option value="zitobox">Zitobox</option>
+                                <option value="carnivalciti">CarnivalCiti</option>
+                            </select>
+                        </label>
+                        <label style="font-size:0.78rem; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+                            From (date + time)
+                            <input type="datetime-local" id="exp-from" style="background:var(--card-bg-light); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; font-size:0.82rem; color-scheme:dark;">
+                        </label>
+                        <label style="font-size:0.78rem; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+                            To (date + time)
+                            <input type="datetime-local" id="exp-to" style="background:var(--card-bg-light); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; font-size:0.82rem; color-scheme:dark;">
+                        </label>
+                        <label style="font-size:0.78rem; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+                            Min value
+                            <input type="number" id="exp-min" placeholder="0" style="background:var(--card-bg-light); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; font-size:0.82rem; width:100px;">
+                        </label>
+                        <label style="font-size:0.78rem; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+                            Max value
+                            <input type="number" id="exp-max" placeholder="∞" style="background:var(--card-bg-light); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; font-size:0.82rem; width:100px;">
+                        </label>
+                        <button class="pill primary" id="exp-copy-btn" style="height:36px;">📋 Copy filtered (TSV)</button>
+                        <button class="pill" id="exp-download-btn" style="height:36px;">⬇ Download .tsv</button>
+                        <button class="pill" id="exp-clear-btn" style="height:36px;">Clear filters</button>
+                    </div>
+                    <div id="exp-status" class="live-log-pause">—</div>
+                    <pre id="exp-preview" style="background:#0b1220; border:1px solid var(--border); border-radius:6px; padding:10px 12px; font-family:'Courier New', monospace; font-size:0.78rem; max-height:200px; overflow:auto; margin:10px 0 0 0; white-space:pre; display:none;"></pre>
+                </div>
+            </div>
         </details>
 
         <!-- Game tabs (one per game for the active source) -->
@@ -653,7 +691,74 @@
                     renderLiveLog();
                 }
             });
+            // Export panel handlers
+            document.getElementById('exp-copy-btn').addEventListener('click', () => exportFiltered('copy'));
+            document.getElementById('exp-download-btn').addEventListener('click', () => exportFiltered('download'));
+            document.getElementById('exp-clear-btn').addEventListener('click', clearExportFilters);
+            // Auto-update preview on any filter change (debounced)
+            ['exp-source','exp-from','exp-to','exp-min','exp-max'].forEach(id => {
+                document.getElementById(id).addEventListener('change', () => exportFiltered('preview'));
+            });
         });
+
+        // ─── Export & Filter ─────────────────────────────────────────────
+        function buildExportUrl() {
+            const params = new URLSearchParams();
+            const src = document.getElementById('exp-source').value;
+            params.set('source', src);
+            const from = document.getElementById('exp-from').value;
+            const to = document.getElementById('exp-to').value;
+            const min = document.getElementById('exp-min').value;
+            const max = document.getElementById('exp-max').value;
+            if (from) params.set('from', from.replace('T', ' ') + ':00');
+            if (to)   params.set('to',   to.replace('T',   ' ') + ':59');
+            if (min !== '') params.set('min_value', min);
+            if (max !== '') params.set('max_value', max);
+            return '/api/export?' + params.toString();
+        }
+
+        async function exportFiltered(mode) {
+            const url = buildExportUrl();
+            const statusEl = document.getElementById('exp-status');
+            const previewEl = document.getElementById('exp-preview');
+            try {
+                statusEl.textContent = 'Fetching…';
+                const resp = await fetch(url);
+                if (!resp.ok) {
+                    statusEl.textContent = 'Error ' + resp.status;
+                    return;
+                }
+                const text = await resp.text();
+                const lines = text.split('\n').length - 1;  // minus header
+                previewEl.textContent = text.split('\n').slice(0, 30).join('\n') + (lines > 30 ? `\n... +${lines - 30} more` : '');
+                previewEl.style.display = 'block';
+                statusEl.textContent = `${lines} row(s) · ${text.length} chars`;
+
+                if (mode === 'copy') {
+                    await navigator.clipboard.writeText(text);
+                    statusEl.textContent = `✓ Copied ${lines} row(s) to clipboard (TSV)`;
+                } else if (mode === 'download') {
+                    const blob = new Blob([text], { type: 'text/tab-separated-values' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'jackpot_filtered_' + Date.now() + '.tsv';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    statusEl.textContent = `✓ Downloaded ${lines} row(s)`;
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e.message;
+            }
+        }
+
+        function clearExportFilters() {
+            document.getElementById('exp-from').value = '';
+            document.getElementById('exp-to').value = '';
+            document.getElementById('exp-min').value = '';
+            document.getElementById('exp-max').value = '';
+            document.getElementById('exp-preview').style.display = 'none';
+            document.getElementById('exp-status').textContent = '—';
+        }
 
         // ─── Data fetch ─────────────────────────────────────────────────────
         async function refreshAll() {

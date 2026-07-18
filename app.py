@@ -435,12 +435,71 @@ def api_history():
     code = request.args.get("code", "")
     if not source or not code:
         return jsonify({"ok": False, "error": "source and code required"}), 400
+    ts_from = request.args.get("from") or None
+    ts_to = request.args.get("to") or None
+    min_value = _parse_float_arg("min_value")
+    max_value = _parse_float_arg("max_value")
+    limit = int(request.args.get("limit", "1000"))
     return jsonify({
         "ok": True,
-        "history": db.get_history(source, code, limit=1000),
+        "history": db.get_history(source, code, limit=limit,
+                                  ts_from=ts_from, ts_to=ts_to,
+                                  min_value=min_value, max_value=max_value),
         "sparkline": db.get_sparkline(source, code, points=40),
         "winners": db.get_winners(source, code),
     })
+
+
+@app.route("/api/export")
+def api_export():
+    """Return filtered rows as TSV (default) or CSV. Designed to be
+    piped into a 'Copy to clipboard' action in the UI; the user can
+    then paste directly into Excel/Google Sheets.
+
+    Query params:
+      source      required: 'zitobox' or 'carnivalciti'
+      from, to    optional ISO 8601 lower/upper bound (inclusive / exclusive)
+      min_value   optional numeric lower bound on jackpot_value
+      max_value   optional numeric upper bound on jackpot_value
+      games       optional comma-separated game codes to include
+      format      'tsv' (default) or 'csv'
+    """
+    source = request.args.get("source", "")
+    if source not in SCRAPERS:
+        return jsonify({"ok": False, "error": f"Unknown source: {source}"}), 400
+    ts_from = request.args.get("from") or None
+    ts_to = request.args.get("to") or None
+    min_value = _parse_float_arg("min_value")
+    max_value = _parse_float_arg("max_value")
+    games_param = request.args.get("games") or ""
+    games_filter = [g.strip() for g in games_param.split(",") if g.strip()] or None
+    fmt = (request.args.get("format") or "tsv").lower()
+
+    rows = db.get_export_rows(
+        source, ts_from=ts_from, ts_to=ts_to,
+        min_value=min_value, max_value=max_value,
+        games_filter=games_filter,
+    )
+    body = db.format_export_tsv(rows)
+    if fmt == "csv":
+        body = body.replace("\t", ",")
+        mime = "text/csv"
+    else:
+        mime = "text/tab-separated-values"
+    from flask import Response
+    return Response(body, mimetype=mime, headers={
+        "Content-Disposition": f'attachment; filename="jackpot_{source}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.{fmt}"',
+    })
+
+
+def _parse_float_arg(name: str):
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 @app.route("/api/stats")

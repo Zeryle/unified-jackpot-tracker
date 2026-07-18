@@ -234,6 +234,16 @@ class ZitoboxScraper:
         return results
 
     async def _scrape_game(self, game: dict) -> dict:
+        """Scrape one Zitobox game, retrying once if the cached token
+        is stale.
+
+        Root cause of the historic "2nd cycle takes 5x longer" bug:
+        the cached token expires between cycles but the old code
+        silently fell through to a full Playwright token harvest
+        (~30-90s per game). With 5 games that's 5x the duration. The
+        fix: try cached token, detect expiry via HTTP status or empty
+        response, invalidate cache, re-harvest once.
+        """
         code = game["code"]
         name = game["name"]
         display_name = game.get("jackpot_display") or None
@@ -243,9 +253,13 @@ class ZitoboxScraper:
         token = self._token_cache.get(code)
         rgs_code = self._rgs_code.get(code)
         if token and rgs_code:
-            text = await self._fetch_jackpot_httpx(rgs_code, token)
-            if text and "jackpots" in text:
-                return self._parse_and_save(code, name, text, display_name)
+            result = await self._try_cached_token(code, name, rgs_code, token, display_name)
+            if result is not None:
+                return result
+            # Cached token stale — invalidate and fall through to harvest.
+            print(f"  [zitobox] cached token stale for {code}, re-harvesting")
+            self._token_cache.pop(code, None)
+            self._rgs_code.pop(code, None)
 
         # Need a new token: spin up a headless browser once.
         token = await self._harvest_token(code, game["url"])
@@ -261,8 +275,22 @@ class ZitoboxScraper:
             return {"code": code, "name": name, "error": "no_jackpot"}
         return self._parse_and_save(code, name, text, display_name)
 
-    @staticmethod
-    async def _fetch_jackpot_httpx(rgs_code: str, token: str) -> str:
+    async def _try_cached_token(self, code: str, name: str, rgs_code: str, token: str, display_name) -> Optional[dict]:
+        """Return a parsed result dict if cached token works, else None."""
+        status, text = await self._fetch_jackpot_httpx_status(rgs_code, token)
+        if status == 200 and text and "jackpots" in text:
+            return self._parse_and_save(code, name, text, display_name)
+        return None
+
+    async def _fetch_jackpot_httpx(self, rgs_code: str, token: str) -> str:
+        _, text = await self._fetch_jackpot_httpx_status(rgs_code, token)
+        return text
+
+    async def _fetch_jackpot_httpx_status(self, rgs_code: str, token: str) -> tuple[int, str]:
+        """Return (http_status, body) so callers can detect token expiry.
+        Instance method (not static) so test mocks via monkey-patching
+        the instance can intercept it.
+        """
         url = ZitoboxScraper.JACKPOT_URL_TEMPLATE.format(code=rgs_code) + f"?token={token}"
         try:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -270,10 +298,10 @@ class ZitoboxScraper:
                     url,
                     headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
                 )
-                return r.text if r.status_code == 200 else ""
+                return (r.status_code, r.text if r.status_code == 200 else "")
         except Exception as e:
             print(f"  [zitobox] httpx fetch error: {e}")
-            return ""
+            return (0, "")
 
     def _parse_and_save(self, code: str, name: str, text: str, display_name: str | None) -> dict:
         m = re.search(r"(\{.*\})", text)
@@ -411,12 +439,31 @@ class CarnivalCitiScraper:
                     r = await self._scrape_game(page, g)
                     results.append(r)
                     await asyncio.sleep(1)
+
+                # Verify every game produced a reading. If any missed
+                # (got_data=False), do ONE more pass over only the
+                # failed ones — the SPA may have warmed up enough on
+                # the first pass to actually serve the jackpot poll
+                # the second time.
+                missing = [g for g, r in zip(games, results) if not r.get("got_data")]
+                if missing:
+                    print(f"[{datetime.now().isoformat()}] [carnivalciti] {len(missing)} game(s) missing data — retry pass")
+                    for g in missing:
+                        idx = games.index(g)
+                        r = await self._scrape_game(page, g)
+                        results[idx] = r
+                        await asyncio.sleep(1)
+
                 await context.close()
             finally:
                 await browser.close()
 
         success = sum(1 for r in results if "value" in r)
-        print(f"[{datetime.now().isoformat()}] [carnivalciti] Done: {success}/{len(results)} in CC mode")
+        missing_count = sum(1 for r in results if not r.get("got_data"))
+        summary = f"{success}/{len(results)}"
+        if missing_count:
+            summary += f" ({missing_count} missing after retry)"
+        print(f"[{datetime.now().isoformat()}] [carnivalciti] Done: {summary}")
         return results
 
     # ─── login ────────────────────────────────────────────────────────────
@@ -616,6 +663,16 @@ class CarnivalCitiScraper:
     # ─── per-game ────────────────────────────────────────────────────────
 
     async def _scrape_game(self, page: Page, game: dict) -> dict:
+        """Scrape one CarnivalCiti game with bounded retry.
+
+        Root cause of the historic "Carnival tracking silently fails"
+        bug: the page took longer than 180s to mount + emit the
+        jackpot/get response (especially the last 3-4 games after the
+        SPA warmed up). Old code gave up after one 180s attempt. New
+        code retries up to N times with a hard wall-clock cap, and
+        records a `got_data` flag so the caller can verify each game
+        produced a reading inside the cycle window.
+        """
         code = game["code"]
         name = game["name"]
         print(f"\n  [carnivalciti] Scraping {name} ({code})")
@@ -651,27 +708,38 @@ class CarnivalCitiScraper:
 
         page.on("response", on_response)
         try:
-            # domcontentloaded (not commit) — Angular SPA needs to mount
-            # before it issues the jackpot/get poll. commit fires too
-            # early and the listener never captures data.
-            try:
-                await page.goto(self.GAME_URL_TEMPLATE.format(code=code), wait_until="domcontentloaded", timeout=75000)
-            except Exception as e:
-                print(f"  [load] {name}: {e}")
-            # 3-min hard deadline: if the listener hasn't caught the
-            # jackpot by now, it'll never catch it. The previous 5-min
-            # deadline made the last 3-4 games hang far past the
-            # hour-top, leaving the cycle to time out without data.
-            deadline = datetime.now() + timedelta(seconds=180)
-            while not captured["done"] and datetime.now() < deadline:
-                await asyncio.sleep(2)
+            # Up to MAX_ATTEMPTS goto+wait passes per game, with a hard
+            # TOTAL deadline so we never blow past the cycle window.
+            MAX_ATTEMPTS = 3
+            PER_ATTEMPT_DEADLINE = 90  # seconds
+            total_deadline = datetime.now() + timedelta(seconds=PER_ATTEMPT_DEADLINE * MAX_ATTEMPTS)
+            attempt = 0
+            while attempt < MAX_ATTEMPTS and datetime.now() < total_deadline:
+                attempt += 1
+                captured["done"] = False
+                captured["result"] = None
+                print(f"  [carnivalciti] {name}: attempt {attempt}/{MAX_ATTEMPTS}")
+                try:
+                    await page.goto(
+                        self.GAME_URL_TEMPLATE.format(code=code),
+                        wait_until="domcontentloaded",
+                        timeout=75000,
+                    )
+                except Exception as e:
+                    print(f"  [load] {name} attempt {attempt}: {e}")
+                attempt_deadline = datetime.now() + timedelta(seconds=PER_ATTEMPT_DEADLINE)
+                while not captured["done"] and datetime.now() < attempt_deadline and datetime.now() < total_deadline:
+                    await asyncio.sleep(2)
+                if captured["done"]:
+                    break  # got data, no need to retry
+                print(f"  [carnivalciti] {name}: no data in {PER_ATTEMPT_DEADLINE}s, will retry")
             if captured["done"]:
                 v = captured["result"]["value"]
                 n = captured["result"]["jackpot_name"]
                 print(f"  [OK] {name}: {n} = {v:,.2f} SC (CC)")
-                return {"code": code, "name": name, **captured["result"]}
-            print(f"  [WARN] {name}: no CC jackpot within 180s")
-            return {"code": code, "name": name, "error": "no_cc_jackpot"}
+                return {"code": code, "name": name, **captured["result"], "attempts": attempt, "got_data": True}
+            print(f"  [WARN] {name}: no CC jackpot after {attempt} attempts")
+            return {"code": code, "name": name, "error": "no_cc_jackpot", "attempts": attempt, "got_data": False}
         finally:
             # Always remove the listener — even on goto exception or
             # timeout — so it doesn't bleed into the next game.

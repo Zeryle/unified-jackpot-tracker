@@ -1,0 +1,15 @@
+# CarnivalCiti credentials. Required for the CarnivalCiti scraper to log in.
+# Format:
+#   # email
+#   your@email.com
+#   # password
+#   your_password
+#
+# OR simpler:
+#   your@email.com
+#   your_password
+#
+# DO NOT commit this file (gitignored). On the VPS, it lives at
+# /opt/<project>/accessos.txt owned by the deploy user with mode 600.
+#email
+#password

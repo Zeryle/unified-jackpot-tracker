@@ -119,7 +119,6 @@ class TestNoZombieWorker(unittest.TestCase):
             "Worker thread still alive after Stop")
         self.assertFalse(st["active"])
 
-
 # ─── T2: Carnival listener cleanup ──────────────────────────────────────────
 
 
@@ -128,8 +127,9 @@ class TestCarnivalListenerCleanup(unittest.TestCase):
         """Verifies that the listener registered in `_scrape_game` is
         removed in `finally`, even when `page.goto()` raises — AND that
         the cleanup happens BEFORE the wait deadline expires. The
-        production code uses a 180s deadline; we monkey-patch the
-        deadline to ~0 so the test runs in <1s."""
+        production code uses a 90s per-attempt deadline; we monkey-patch
+        the deadline + datetime.now so the test runs in <1s.
+        """
         sys.modules["playwright.async_api"] = Stub()
         from scrapers import CarnivalCitiScraper
         import scrapers as scrapers_module
@@ -150,25 +150,53 @@ class TestCarnivalListenerCleanup(unittest.TestCase):
                 self.goto_calls += 1
                 raise Exception("simulated network failure")
 
-        # Replace asyncio.sleep so the wait loop exits on the first tick.
+        # Speed up sleep
         original_sleep = scrapers_module.asyncio.sleep
         async def fast_sleep(*a, **kw):
-            return await original_sleep(0)  # yield once, ~0ms
+            return await original_sleep(0)
         scrapers_module.asyncio.sleep = fast_sleep
+
+        # Speed up time: monkey-patch scrapers.datetime.now() so the 90s
+        # per-attempt deadline trips fast. (scrapers.py does
+        # `from datetime import datetime, timedelta`, so we patch the
+        # names on the module, not the datetime module itself.)
+        import datetime as _dt
+        real_scrapers_datetime = scrapers_module.datetime
+        real_scrapers_timedelta = scrapers_module.timedelta
+        offset = [0.0]
+        class FakeDatetime:
+            @staticmethod
+            def now(tz=None):
+                return _dt.datetime.now() + _dt.timedelta(seconds=offset[0])
+        scrapers_module.datetime = FakeDatetime
 
         try:
             page = MockPage()
             sc = CarnivalCitiScraper()
-            result = asyncio.run(sc._scrape_game(page, {"code": "G164", "name": "Ten Tigers"}))
+            # Run with a background ticker that advances the fake clock
+            import threading as _th
+            stop_ticker = _th.Event()
+            def tick():
+                while not stop_ticker.is_set():
+                    offset[0] += 120
+                    stop_ticker.wait(0.05)
+            t = _th.Thread(target=tick, daemon=True)
+            t.start()
+            try:
+                result = asyncio.run(sc._scrape_game(page, {"code": "G164", "name": "Ten Tigers"}))
+            finally:
+                stop_ticker.set()
 
             self.assertEqual(result.get("error"), "no_cc_jackpot",
                 f"Expected no_cc_jackpot error, got {result}")
             self.assertEqual(page._listeners, [],
                 f"BUG: listener not removed in finally: {page._listeners}")
+            # The retry logic now tries up to MAX_ATTEMPTS gotos.
             self.assertGreaterEqual(page.goto_calls, 1,
                 "page.goto was never called")
         finally:
             scrapers_module.asyncio.sleep = original_sleep
+            scrapers_module.datetime = real_scrapers_datetime
 
 
 # ─── T3: Log file persistence ──────────────────────────────────────────────
@@ -268,6 +296,225 @@ class TestDiagnosticsEndpoint(unittest.TestCase):
             f"Expected at least 1 new line, got {len(new_seqs)}")
         self.assertGreater(min(new_seqs), before,
             f"Got seq {min(new_seqs)} <= before {before}")
+
+
+# ─── Run ────────────────────────────────────────────────────────────────────
+
+# ─── T5: Zitobox token expiry retry ──────────────────────────────────────────
+
+
+class TestZitoboxTokenRetry(unittest.TestCase):
+    """When the cached token is stale, _scrape_game must invalidate
+    cache and retry (re-harvest). It must NOT silently fall through to
+    a slow harvest on every cycle (root cause of "5x slower 2nd run"
+    bug)."""
+
+    def test_cached_token_used_when_valid(self):
+        sys.modules["playwright.async_api"] = Stub()
+        from scrapers import ZitoboxScraper
+        sc = ZitoboxScraper()
+        sc._token_cache["G123"] = "tok_abc"
+        sc._rgs_code["G123"] = "G243"
+
+        # Patch the underlying fetcher to return a valid payload
+        async def fake_status(rgs, tok):
+            return (200, '{"jackpots":{"data":[{"jackpotName":"MINI","levels":[{"currentValue":5000,"level":1}]}]}}')
+        sc._fetch_jackpot_httpx_status = fake_status
+
+        import asyncio
+        result = asyncio.run(sc._scrape_game({"code": "G123", "name": "Test", "url": "x", "jackpot_display": "MINI"}))
+        self.assertIn("value", result)
+        self.assertEqual(result["value"], 50.0)
+
+    def test_stale_token_invalidates_cache_and_reharvests(self):
+        sys.modules["playwright.async_api"] = Stub()
+        from scrapers import ZitoboxScraper
+        sc = ZitoboxScraper()
+        sc._token_cache["G123"] = "tok_stale"
+        sc._rgs_code["G123"] = "G243"
+
+        # First call (cached) returns 401 — token stale.
+        # Second call (after invalidate) returns 200 — fresh.
+        call_count = [0]
+        async def fake_status(rgs, tok):
+            call_count[0] += 1
+            if call_count[0] == 1 and tok == "tok_stale":
+                return (401, "")
+            return (200, '{"jackpots":{"data":[{"jackpotName":"MINI","levels":[{"currentValue":7000,"level":1}]}]}}')
+        sc._fetch_jackpot_httpx_status = fake_status
+
+        # Patch _harvest_token to return a new token
+        async def fake_harvest(code, url):
+            return "tok_fresh"
+        sc._harvest_token = fake_harvest
+
+        import asyncio
+        result = asyncio.run(sc._scrape_game({"code": "G123", "name": "Test", "url": "x", "jackpot_display": "MINI"}))
+        self.assertIn("value", result)
+        self.assertEqual(result["value"], 70.0)
+        # Token must have been swapped to the fresh one
+        self.assertEqual(sc._token_cache["G123"], "tok_fresh")
+        # Stale token was tried at least once, fresh one too
+        self.assertGreaterEqual(call_count[0], 2)
+
+
+# ─── T6: CarnivalCiti got_data + retry flag ──────────────────────────────────
+
+
+class TestCarnivalRetryFlag(unittest.TestCase):
+    """The new retry logic must:
+    - Try multiple attempts when first fails
+    - Return got_data=True only when jackpot actually captured
+    - Return got_data=False (with attempts >= 1) when all fail
+    - Remove listener in finally every time
+    """
+
+    def test_got_data_false_when_no_listener_fires(self):
+        sys.modules["playwright.async_api"] = Stub()
+        from scrapers import CarnivalCitiScraper
+        import scrapers as scrapers_module
+        sc = CarnivalCitiScraper()
+
+        original_sleep = scrapers_module.asyncio.sleep
+        async def fast_sleep(*a, **kw): return await original_sleep(0)
+        scrapers_module.asyncio.sleep = fast_sleep
+
+        real_dt = scrapers_module.datetime
+        offset = [0.0]
+        class FakeDatetime:
+            @staticmethod
+            def now(tz=None):
+                import datetime as _dt
+                return _dt.datetime.now() + _dt.timedelta(seconds=offset[0])
+        scrapers_module.datetime = FakeDatetime
+
+        class MockPage:
+            def __init__(self):
+                self._listeners = []
+                self.goto_calls = 0
+            def on(self, evt, fn): self._listeners.append((evt, fn))
+            def remove_listener(self, evt, fn):
+                for i,(e,f) in enumerate(self._listeners):
+                    if e==evt and f is fn: del self._listeners[i]; return
+            async def goto(self, *a, **kw):
+                self.goto_calls += 1
+                raise Exception("net fail")
+
+        import threading as _th
+        stop = _th.Event()
+        def tick():
+            while not stop.is_set():
+                offset[0] += 120
+                stop.wait(0.05)
+        _th.Thread(target=tick, daemon=True).start()
+
+        try:
+            page = MockPage()
+            result = asyncio.run(sc._scrape_game(page, {"code": "G164", "name": "Ten Tigers"}))
+            self.assertFalse(result.get("got_data"))
+            self.assertEqual(result.get("error"), "no_cc_jackpot")
+            self.assertGreaterEqual(result.get("attempts", 0), 1)
+            # Listener removed even after retries
+            self.assertEqual(page._listeners, [],
+                f"listener leaked: {page._listeners}")
+        finally:
+            stop.set()
+            scrapers_module.asyncio.sleep = original_sleep
+            scrapers_module.datetime = real_dt
+
+
+# ─── T7: /api/export endpoint ────────────────────────────────────────────────
+
+
+class TestExportEndpoint(unittest.TestCase):
+    def test_export_returns_tsv(self):
+        app = _load_app_with_stubs()
+        client = app.app.test_client()
+        # Insert a few rows directly via the db module
+        import tempfile, os
+        tmpdir = tempfile.mkdtemp()
+        import db as db_module
+        real_db_name = db_module.DB_NAME
+        real_backup_dir = db_module.BACKUP_DIR
+        db_module.DB_NAME = type(real_db_name)(tmpdir + "/test.db")
+        db_module.BACKUP_DIR = type(real_backup_dir)(tmpdir + "/backups")
+        try:
+            db_module.init_db()
+            db_module.save_jackpot("zitobox", "G1", "Game1", 1234, "MINI", ts="2026-01-01T10:00:00")
+            db_module.save_jackpot("zitobox", "G1", "Game1", 5678, "MINI", ts="2026-01-01T11:00:00")
+            db_module.save_jackpot("zitobox", "G2", "Game2", 9999, "GRAND", ts="2026-01-01T12:00:00")
+            r = client.get("/api/export?source=zitobox")
+            self.assertEqual(r.status_code, 200)
+            text = r.data.decode()
+            lines = text.strip().split("\n")
+            # Header + 3 rows
+            self.assertEqual(len(lines), 4, f"Expected 4 lines, got {len(lines)}:\n{text}")
+            self.assertIn("timestamp\tsource\tgame_code", lines[0])
+            self.assertIn("2026-01-01 10:00:00\tzitobox\tG1", lines[1])
+        finally:
+            db_module.DB_NAME = real_db_name
+            db_module.BACKUP_DIR = real_backup_dir
+
+    def test_export_filters_by_value_range(self):
+        app = _load_app_with_stubs()
+        client = app.app.test_client()
+        import tempfile
+        import db as db_module
+        tmpdir = tempfile.mkdtemp()
+        real_db_name = db_module.DB_NAME
+        real_backup_dir = db_module.BACKUP_DIR
+        db_module.DB_NAME = type(real_db_name)(tmpdir + "/test2.db")
+        db_module.BACKUP_DIR = type(real_backup_dir)(tmpdir + "/backups2")
+        try:
+            db_module.init_db()
+            db_module.save_jackpot("zitobox", "G1", "Game1", 100, "MINI", ts="2026-01-01T10:00:00")
+            db_module.save_jackpot("zitobox", "G1", "Game1", 500, "MINI", ts="2026-01-01T11:00:00")
+            db_module.save_jackpot("zitobox", "G1", "Game1", 900, "MINI", ts="2026-01-01T12:00:00")
+            r = client.get("/api/export?source=zitobox&min_value=200&max_value=800")
+            self.assertEqual(r.status_code, 200)
+            text = r.data.decode()
+            lines = [l for l in text.strip().split("\n") if l]
+            self.assertEqual(len(lines), 2, f"Expected header + 1 row (500), got {len(lines)}:\n{text}")
+            self.assertIn("\t500", lines[1])
+        finally:
+            db_module.DB_NAME = real_db_name
+            db_module.BACKUP_DIR = real_backup_dir
+
+    def test_export_rejects_unknown_source(self):
+        app = _load_app_with_stubs()
+        client = app.app.test_client()
+        r = client.get("/api/export?source=bitcoin")
+        self.assertEqual(r.status_code, 400)
+
+
+# ─── T8: /api/history filters ────────────────────────────────────────────────
+
+
+class TestHistoryFilters(unittest.TestCase):
+    def test_history_supports_value_range(self):
+        app = _load_app_with_stubs()
+        client = app.app.test_client()
+        import tempfile
+        import db as db_module
+        tmpdir = tempfile.mkdtemp()
+        real_db_name = db_module.DB_NAME
+        real_backup_dir = db_module.BACKUP_DIR
+        db_module.DB_NAME = type(real_db_name)(tmpdir + "/test3.db")
+        db_module.BACKUP_DIR = type(real_backup_dir)(tmpdir + "/backups3")
+        try:
+            db_module.init_db()
+            db_module.save_jackpot("zitobox", "G1", "Game1", 100, "MINI", ts="2026-01-01T10:00:00")
+            db_module.save_jackpot("zitobox", "G1", "Game1", 500, "MINI", ts="2026-01-01T11:00:00")
+            db_module.save_jackpot("zitobox", "G1", "Game1", 900, "MINI", ts="2026-01-01T12:00:00")
+            r = client.get("/api/history?source=zitobox&code=G1&min_value=200&max_value=800")
+            self.assertEqual(r.status_code, 200)
+            d = r.json
+            self.assertTrue(d["ok"])
+            self.assertEqual(len(d["history"]), 1)
+            self.assertEqual(d["history"][0]["value"], 500.0)
+        finally:
+            db_module.DB_NAME = real_db_name
+            db_module.BACKUP_DIR = real_backup_dir
 
 
 # ─── Run ────────────────────────────────────────────────────────────────────

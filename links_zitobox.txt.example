@@ -1,0 +1,5 @@
+# Zitobox games: name | jackpot_display | url
+# (jackpot_display overrides the auto-extracted name in the dashboard)
+# Add one line per game you want to track.
+# Example:
+# Lightning Fruits|Frutti Jackpot (Melon)|https://www.zitobox.com/game/slotgame/Lightning-Fruits/5862/9/2/00

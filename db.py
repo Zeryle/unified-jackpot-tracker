@@ -207,12 +207,41 @@ def get_latest_values(source: Optional[str] = None) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def get_history(source: str, game_code: str, limit: int = 500) -> list[dict]:
+def get_history(
+    source: str,
+    game_code: str,
+    limit: int = 500,
+    ts_from: Optional[str] = None,
+    ts_to: Optional[str] = None,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+) -> list[dict]:
+    """Return historical readings for a (source, game_code), optionally
+    filtered by timestamp range and value range. ts_from / ts_to are
+    ISO 8601 strings (inclusive lower, exclusive upper). min/max_value
+    are numeric thresholds in display units (SC or USD, depends on source).
+    """
+    clauses = ["source = ?", "game_code = ?"]
+    params: list = [source, game_code]
+    if ts_from:
+        clauses.append("timestamp >= ?")
+        params.append(ts_from)
+    if ts_to:
+        clauses.append("timestamp < ?")
+        params.append(ts_to)
+    if min_value is not None:
+        clauses.append("jackpot_value >= ?")
+        params.append(min_value)
+    if max_value is not None:
+        clauses.append("jackpot_value <= ?")
+        params.append(max_value)
+    where = " AND ".join(clauses)
+    params.append(limit)
     with get_conn() as c:
         cur = c.execute(
-            "SELECT id, timestamp, jackpot_value, jackpot_name FROM jackpot_values "
-            "WHERE source = ? AND game_code = ? ORDER BY id ASC LIMIT ?",
-            (source, game_code, limit),
+            f"SELECT id, timestamp, jackpot_value, jackpot_name FROM jackpot_values "
+            f"WHERE {where} ORDER BY id ASC LIMIT ?",
+            params,
         )
         rows = list(cur.fetchall())
 
@@ -234,6 +263,63 @@ def get_history(source: str, game_code: str, limit: int = 500) -> list[dict]:
         })
         prev = val
     return out
+
+
+def get_export_rows(
+    source: str,
+    ts_from: Optional[str] = None,
+    ts_to: Optional[str] = None,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+    games_filter: Optional[list[str]] = None,
+) -> list[dict]:
+    """Return rows across all games of a source, with filters applied.
+    Used by the export/copy endpoint. Returns dicts ordered by timestamp ASC.
+    """
+    clauses = ["source = ?"]
+    params: list = [source]
+    if ts_from:
+        clauses.append("timestamp >= ?")
+        params.append(ts_from)
+    if ts_to:
+        clauses.append("timestamp < ?")
+        params.append(ts_to)
+    if min_value is not None:
+        clauses.append("jackpot_value >= ?")
+        params.append(min_value)
+    if max_value is not None:
+        clauses.append("jackpot_value <= ?")
+        params.append(max_value)
+    if games_filter:
+        placeholders = ",".join("?" for _ in games_filter)
+        clauses.append(f"game_code IN ({placeholders})")
+        params.extend(games_filter)
+    where = " AND ".join(clauses)
+    with get_conn() as c:
+        cur = c.execute(
+            f"SELECT id, source, game_code, game_name, jackpot_name, jackpot_value, timestamp "
+            f"FROM jackpot_values WHERE {where} ORDER BY timestamp ASC",
+            params,
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def format_export_tsv(rows: list[dict]) -> str:
+    """Render rows as TSV (tab-separated) for easy paste into Excel/Sheets.
+    Header line first; values are tab-separated; rows separated by \\n."""
+    header = ["timestamp", "source", "game_code", "game_name", "jackpot_name", "value"]
+    out = ["\t".join(header)]
+    for r in rows:
+        ts = (r.get("timestamp") or "").replace("T", " ")[:19]
+        out.append("\t".join([
+            ts,
+            r.get("source") or "",
+            r.get("game_code") or "",
+            r.get("game_name") or "",
+            r.get("jackpot_name") or "",
+            str(int(r.get("jackpot_value") or 0)),
+        ]))
+    return "\n".join(out)
 
 
 def get_sparkline(source: str, game_code: str, points: int = 30) -> list[dict]:

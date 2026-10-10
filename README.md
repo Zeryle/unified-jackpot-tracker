@@ -61,10 +61,6 @@ accessos.txt.example       Template for CarnivalCiti credentials
 GUIA-DEPLOY.md    VPS deploy guide (systemd + Nginx + Let's Encrypt)
 ```
 
-## What NOT to commit
-
-`.gitignore` excludes: `accessos.txt`, `carnival_storage.json`, `data/`, `*.vbs`, `*.bat`. The first two contain real credentials / browser session state — never push them.
-
 ## Known behaviors
 
 - Zitobox cycles cache tokens between runs; on 401 the cache is invalidated and a new token is harvested (~30-90s per game on first failure, ~instant on retry).
